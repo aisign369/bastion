@@ -11,6 +11,7 @@
    ============================================================ */
 import { CELL, COLS, ROWS, W, H, WPC, WAY, BREACH, GATE, SEGS, PATHLEN, posAt, pathSet } from './path';
 import { startPhaserScene } from './phaser-scene';
+import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, queueCloudSave } from './cloud';
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
 const cv=document.getElementById('cv');
 const renderCanvas=document.createElement('canvas');
@@ -25,6 +26,8 @@ const lt=(h,f)=>{const n=parseInt(h.slice(1),16);
   return `rgb(${r},${g},${b})`;};
 const dr=i=>{const v=Math.sin(i*127.13+311.7)*43758.5453;return v-Math.floor(v);};
 const BEST_KEY='bastion_orchid_best', SAVE_KEY='bastion_orchid_save';
+const SAVE_OWNER_KEY='bastion_orchid_save_owner';
+let cloudAccount=null,cloudAvailable=false,cloudMessage='Connecting to Google save…';
 const SAVE_SCHEMA=2, PREFS_KEY='bastion_orchid_prefs';
 const loadBest=()=>{try{return +localStorage.getItem(BEST_KEY)||0;}catch(e){return 0;}};
 const saveBest=v=>{try{localStorage.setItem(BEST_KEY,String(v));}catch(e){}};
@@ -1685,6 +1688,30 @@ function sanitizeLoaded(d){
   o.MOD=M;
   return o;
 }
+function parsedSave(raw){
+  if(!raw)return null;
+  try{return sanitizeLoaded(JSON.parse(raw));}catch(e){return null;}
+}
+function switchSaveOwner(nextOwner,remoteSave){
+  try{
+    const previous=localStorage.getItem(SAVE_OWNER_KEY)||'guest';
+    if(previous!==nextOwner){
+      const current=localStorage.getItem(SAVE_KEY);
+      if(current)localStorage.setItem(SAVE_KEY+':'+previous,current);
+      const saved=localStorage.getItem(SAVE_KEY+':'+nextOwner);
+      if(saved)localStorage.setItem(SAVE_KEY,saved);
+      else localStorage.removeItem(SAVE_KEY);
+      localStorage.setItem(SAVE_OWNER_KEY,nextOwner);
+    }
+    if(nextOwner==='guest')return;
+    const remote=sanitizeLoaded(remoteSave);
+    const local=parsedSave(localStorage.getItem(SAVE_KEY));
+    if(remote&&(!local||remote.at>local.at)){
+      localStorage.setItem(SAVE_KEY,JSON.stringify(remote));
+      localStorage.setItem(SAVE_KEY+':'+nextOwner,JSON.stringify(remote));
+    }else if(local&&(!remote||local.at>remote.at))queueCloudSave(local);
+  }catch(e){console.warn('Save account switch failed; local progress was not deleted.',e);}
+}
 function probeSave(){
   try{
     const raw=localStorage.getItem(SAVE_KEY);
@@ -1692,7 +1719,7 @@ function probeSave(){
     try{
       const d=JSON.parse(raw);
       const s=sanitizeLoaded(d);
-      if(s&&(s.towers.length||s.waveNum||s.cleared))return{ok:true,data:s};
+      if(s&&(s.at||s.towers.length||s.waveNum||s.cleared))return{ok:true,data:s};
       return{ok:false};
     }catch(e){return{ok:false};}
   }catch(e){return null;}
@@ -1703,21 +1730,64 @@ function showOverlay(kind){
     const ps=probeSave();
     const hasSave=!!(ps&&ps.ok);
     const corrupt=!!(ps&&!ps.ok);
+    const guestSave=cloudAccount&&!hasSave&&parsedSave(localStorage.getItem(SAVE_KEY+':guest'));
     overlay.innerHTML=`<div class="panel" role="dialog" aria-modal="true" aria-label="Bastion start">
       <div class="ov-mark">${IC.keep}</div>
       <h1>BASTION</h1>
       <p class="ov-tag">Directive 11 — thirty waves, endless beyond. Best march: <b class="gold">${bestWave}</b>.</p>
       ${corrupt?'<p class="ov-tag" style="color:#ffb4bf">⚠ Your saved march was corrupted and has been quarantined — starting fresh keeps everything else intact.</p>':''}
-      <div class="ov-rules">
-        <div>${IC.bolt}<span>5 turret marks, MK-I→IV visual evolution, and a <b>signature ability</b> at MK-IV for each.</span></div>
-        <div>${IC.coin}<span>Wave modifiers from 12, <b>Protocol Cards</b> every 5 waves, combos multiply gold. Saboteurs disable turrets.</span></div>
-        <div>${IC.shield}<span>Bosses enrage, raise shields and pulse <b>EMP</b>. Progress auto-saves between waves.</span></div>
+      <div class="menu-save">${hasSave?`<strong>CONTINUE — WAVE ${ps.data.waveNum+1}</strong><span>${ps.data.towers.length} towers · ${ps.data.lives} lives</span>`:'<strong>NEW JOURNEY</strong><span>Your progress saves automatically.</span>'}</div>
+      <div class="menu-actions">
+        ${hasSave?'<button class="ov-btn" id="resumeBtn">▶ CONTINUE GAME</button>':''}
+        <button class="${hasSave?'ov-btn2':'ov-btn'}" id="startBtn">NEW GAME</button>
+        <button class="ov-btn2" id="menuSettings">SETTINGS</button>
       </div>
-      ${hasSave?'<button class="ov-btn" id="resumeBtn">▶ RESUME MARCH</button><button class="ov-btn2" id="startBtn">NEW DEPLOYMENT</button>':'<button class="ov-btn" id="startBtn">DEPLOY</button>'}
+      <div class="menu-account"><span id="accountLabel"></span><button id="accountBtn" ${cloudAccount||cloudAvailable?'':'disabled'}>${cloudAccount?'SIGN OUT':'SIGN IN WITH GOOGLE'}</button></div>
+      ${cloudAccount?'<label class="menu-optin"><input id="updatesOptIn" type="checkbox"> Email me when BASTION gets an update</label>':''}
+      ${guestSave?'<button class="ov-btn2" id="importGuestBtn">IMPORT GUEST SAVE</button>':''}
+      <p class="menu-cloud-message" id="cloudMessage"></p>
       <p class="ov-keys">1–5 BUILD · SPACE WAVE · T THEME · P PAUSE</p></div>`;
-    $('startBtn').onclick=()=>{ initAudio(); try{localStorage.removeItem(SAVE_KEY);}catch(e){}
+    $('accountLabel').textContent=cloudAccount?(cloudAccount.name||cloudAccount.email):'GUEST PLAYER';
+    $('cloudMessage').textContent=cloudMessage||(cloudAccount?'Progress syncs with your Google account.':'Sign in to keep progress across devices.');
+    $('menuSettings').onclick=showSettings;
+    $('accountBtn').onclick=async()=>{
+      try{
+        if(cloudAccount)await logOutOfGoogle();
+        else await logInWithGoogle();
+      }catch(e){cloudMessage=e instanceof Error?e.message:'Google sign-in failed.';showOverlay('start');}
+    };
+    if(cloudAccount){
+      $('updatesOptIn').checked=cloudAccount.updatesOptIn;
+      $('updatesOptIn').onchange=async e=>{
+        try{await setUpdateEmails(e.target.checked);cloudAccount.updatesOptIn=e.target.checked;
+          cloudMessage=e.target.checked?'Update emails enabled.':'Update emails disabled.';}
+        catch(err){e.target.checked=!e.target.checked;cloudMessage='Could not save email preference.';}
+        $('cloudMessage').textContent=cloudMessage;
+      };
+    }
+    if(guestSave)$('importGuestBtn').onclick=()=>{
+      const raw=localStorage.getItem(SAVE_KEY+':guest');
+      const save=parsedSave(raw);
+      if(!save)return;
+      localStorage.setItem(SAVE_KEY,JSON.stringify(save));
+      localStorage.setItem(SAVE_KEY+':'+cloudAccount.uid,JSON.stringify(save));
+      queueCloudSave(save);showOverlay('start');
+    };
+    $('startBtn').onclick=()=>{
+      if(hasSave){
+        const confirm=document.createElement('div');confirm.className='menu-confirm';
+        confirm.innerHTML='<p>Start over? Your current progress will be replaced.</p><button id="confirmNew">START NEW GAME</button><button id="cancelNew">CANCEL</button>';
+        $('startBtn').after(confirm);
+        $('startBtn').disabled=true;
+        $('confirmNew').onclick=startNewGame;
+        $('cancelNew').onclick=()=>{confirm.remove();$('startBtn').disabled=false;};
+        return;
+      }
+      startNewGame();
+    };
+    function startNewGame(){initAudio();try{localStorage.removeItem(SAVE_KEY);}catch(e){}
       resetState(); state='play'; overlay.style.display='none';
-      showBanner('WAVE 1 AWAITS','BUILD YOUR DEFENSE, COMMANDER'); };
+      saveGame(true);showBanner('WAVE 1 AWAITS','BUILD YOUR DEFENSE, COMMANDER');}
     if(hasSave)$('resumeBtn').onclick=()=>{ initAudio();
       if(loadGame()){ state='play'; overlay.style.display='none';
         showBanner('MARCH RESUMED','WAVE '+(waveNum+1)+' AWAITS'); }
@@ -1767,13 +1837,18 @@ function saveGame(force){
   if(!force&&n-lastSave<4000)return;
   lastSave=n;
   try{
-    localStorage.setItem(SAVE_KEY,JSON.stringify({
+    const snapshot={
       v:2,at:Date.now(),
       lives,gold:Math.round(gold),waveNum,cleared,endless,kills,goldEarned,bestWave,
       MOD:{...MOD},
       towers:towers.map(t=>({key:t.key,c:t.c,r:t.r,dmgLv:t.dmgLv,rateLv:t.rateLv,
         invested:t.invested,mode:t.mode,kills:t.kills||0})),
-    }));
+    };
+    localStorage.setItem(SAVE_KEY,JSON.stringify(snapshot));
+    if(cloudAccount&&localStorage.getItem(SAVE_OWNER_KEY)===cloudAccount.uid){
+      localStorage.setItem(SAVE_KEY+':'+cloudAccount.uid,JSON.stringify(snapshot));
+      queueCloudSave(snapshot);
+    }
   }catch(e){}
 }
 function loadGame(){
@@ -2831,6 +2906,12 @@ function togglePause(){
   if(!muted)sfx('tick');
 };
 launchBtn.onclick=()=>{if(state==='play'&&!waveActive)startWave();};
+ $('menuBtn').onclick=()=>{
+  if(state==='menu'){showOverlay('start');return;}
+  if(state==='cards')return;
+  if(waveActive){showBanner('FINISH THE WAVE','THE MAIN MENU OPENS BETWEEN WAVES');return;}
+  saveGame(true);state='menu';paused=false;showOverlay('start');
+};
  $('cancelPlace').onclick=()=>{setPlacing(null);sfx('tick');};
 window.addEventListener('beforeunload',()=>saveGame(true));
 
@@ -3337,9 +3418,19 @@ muted=PREFS.muted;
 applyMotion();
 applyTheme(PREFS.themeIx);
 renderPreview(1);renderInspector();showOverlay('start');
+observeCloud(next=>{
+  cloudAvailable=next.available;
+  cloudMessage=next.error||'';
+  if(!next.error){
+    cloudAccount=next.account;
+    switchSaveOwner(cloudAccount?cloudAccount.uid:'guest',cloudAccount?.save);
+  }
+  if(state==='menu')showOverlay('start');
+});
 startPhaserScene(cv,renderCanvas,()=>frame(performance.now()),W,H);
 if(/devtest=1/.test(location.search)){
   setTimeout(()=>{const ok=BASTION_TESTS.runAll();BASTION_TESTS.report();
     showBanner(ok?'DEV TESTS: ALL PASS':'DEV TESTS: FAILURES',BASTION_TESTS.pass+' passed · '+BASTION_TESTS.fail+' failed — see console',ok?'':'bad');},600);
 }
 window.BASTION={version:'glm53-upgrade-2',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
+

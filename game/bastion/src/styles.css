@@ -302,3 +302,13 @@ canvas{touch-action:none}
   #rail section:nth-child(2){left:auto;right:8px;top:46px;bottom:8px;width:min(300px,45vw);max-height:none}
   .cancelchip{bottom:8px;left:55%}
 }
+.menu-save{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:23px 0 14px;padding:14px 15px;background:#0e1929;border:1px solid #a9bbcf38;border-radius:9px;color:#e9d5b9}
+.menu-save strong{font:700 11px Consolas,monospace;letter-spacing:.12em}.menu-save span{font:10px Consolas,monospace;color:#aebdd0;text-align:right}
+.menu-actions{display:grid;gap:8px}.menu-actions .ov-btn2{margin-top:0}.menu-actions button{min-height:42px}
+.menu-account{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px;padding-top:14px;border-top:1px solid #a9bbcf38;color:#cbd8e7;font:11px Consolas,monospace}
+.menu-account button,.menu-confirm button{border:1px solid #d9c19a88;background:#17253a;color:#efd6b0;border-radius:7px;padding:10px 12px;font:700 10px Consolas,monospace;letter-spacing:.07em;cursor:pointer}
+.menu-account button:disabled{opacity:.5;cursor:not-allowed}.menu-optin{display:flex;align-items:center;gap:8px;margin-top:12px;color:#c8d5e4;font-size:11px;line-height:1.4}.menu-optin input{accent-color:#d9c19a;width:17px;height:17px;flex-shrink:0}
+.menu-account span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.menu-account button{flex-shrink:0}
+.menu-cloud-message{margin:10px 0 0;color:#aebed0;font-size:10px;line-height:1.5}.menu-confirm{padding:12px;border:1px solid #d9c19a88;border-radius:8px;background:#101928}.menu-confirm p{color:#ecdcce;font-size:11px;margin-bottom:10px}.menu-confirm button{margin-right:8px}
+@media(max-height:550px) and (max-width:1000px){#overlay{align-items:flex-start;padding:8px}.panel.deployment{display:block;width:min(560px,98vw)}.cover-art{display:none}.deployment .briefing{padding:14px 18px}.deployment h1{font-size:27px}.deployment .ov-tag{margin-top:4px}.deployment .ov-keys{display:none}.menu-save{margin:8px 0;padding:8px}.menu-actions{gap:5px}.menu-actions button{min-height:34px;padding:8px}.menu-account{margin-top:8px;padding-top:8px}.menu-cloud-message{margin-top:5px}}
+

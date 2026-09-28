@@ -20,6 +20,15 @@ The Vercel build uses pnpm 10.29.3 and publishes `dist/`. The HTML entry is `gam
 
 The Vercel project imports this repository's main branch. Root Directory: repository root (./), Framework: Other. `vercel.json` installs dependencies, builds the game and serves `dist/`. Commits to `main` trigger automatic deployments.
 
+## Accounts and saves
+
+The start menu offers New Game, Continue and Settings. Google sign-in uses the `bastion-game` Firebase project owned by `aisign369@gmail.com`. The game stores each signed-in player's email, display name, save, and update-email preference in `players/{uid}`. Email updates are **off by default** and require the player to check the box in the menu. Firestore rules in `firestore.rules` allow a player to read or write only their own record. The game also keeps a local backup and separates guest and account saves on the same device. A guest save can be imported from the menu after sign-in.
+
+Firebase's web configuration is in `.env.production`. These four values identify the public web app and are included in the browser build; they are not server credentials. `.env.local` is ignored by Git and can override them for local development. Google Authentication must list `bastion-eight-henna.vercel.app` as an authorized domain. The default Firestore database uses Standard edition in `me-central1` (Doha), and the rules in `firestore.rules` have been published in Firebase Console.
+
+The Firebase Console's Authentication → Users and Firestore → Data pages show signed-in players and their saved profiles. An email-sending service and owner-facing dashboard are not part of this release; collecting update consent here prepares for those features later.
+
 ## Mobile controls
 
 Tap a tower type and then a free cell to build. Hold a tower type for details. Tap a built tower to upgrade or sell. Drag with one finger; pinch with two fingers to zoom. FIT shows the whole map.
+
