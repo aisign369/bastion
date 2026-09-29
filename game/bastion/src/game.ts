@@ -11,7 +11,7 @@
    ============================================================ */
 import { CELL, COLS, ROWS, W, H, WPC, WAY, BREACH, GATE, SEGS, PATHLEN, posAt, pathSet } from './path';
 import { startPhaserScene } from './phaser-scene';
-import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, queueCloudSave } from './cloud';
+import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, USERNAME_HINT } from './cloud';
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
 const cv=document.getElementById('cv');
 const renderCanvas=document.createElement('canvas');
@@ -29,8 +29,8 @@ const BEST_KEY='bastion_orchid_best', SAVE_KEY='bastion_orchid_save';
 const SAVE_OWNER_KEY='bastion_orchid_save_owner';
 let cloudAccount=null,cloudAvailable=false,cloudMessage='Connecting to Google save…';
 const SAVE_SCHEMA=2, PREFS_KEY='bastion_orchid_prefs';
-const loadBest=()=>{try{return +localStorage.getItem(BEST_KEY)||0;}catch(e){return 0;}};
-const saveBest=v=>{try{localStorage.setItem(BEST_KEY,String(v));}catch(e){}};
+const loadBest=()=>{try{const owner=localStorage.getItem(SAVE_OWNER_KEY)||'guest';return +(localStorage.getItem(BEST_KEY+':'+owner)??(owner==='guest'?localStorage.getItem(BEST_KEY):null))||0;}catch(e){return 0;}};
+const saveBest=v=>{try{localStorage.setItem(BEST_KEY+':'+(localStorage.getItem(SAVE_OWNER_KEY)||'guest'),String(v));}catch(e){}};
 let bestWave=loadBest();
 
 /* ▲ GLM: debug + dev-test activation (never visible in normal play) */
@@ -1702,10 +1702,13 @@ function switchSaveOwner(nextOwner,remoteSave){
       if(saved)localStorage.setItem(SAVE_KEY,saved);
       else localStorage.removeItem(SAVE_KEY);
       localStorage.setItem(SAVE_OWNER_KEY,nextOwner);
+      bestWave=loadBest();
     }
     if(nextOwner==='guest')return;
     const remote=sanitizeLoaded(remoteSave);
     const local=parsedSave(localStorage.getItem(SAVE_KEY));
+    bestWave=Math.max(bestWave,remote?.bestWave||0,local?.bestWave||0,cloudAccount?.bestWave||0);
+    saveBest(bestWave);
     if(remote&&(!local||remote.at>local.at)){
       localStorage.setItem(SAVE_KEY,JSON.stringify(remote));
       localStorage.setItem(SAVE_KEY+':'+nextOwner,JSON.stringify(remote));
@@ -1731,15 +1734,17 @@ function showOverlay(kind){
     const hasSave=!!(ps&&ps.ok);
     const corrupt=!!(ps&&!ps.ok);
     const guestSave=cloudAccount&&!hasSave&&parsedSave(localStorage.getItem(SAVE_KEY+':guest'));
+    const needsUsername=!!cloudAccount&&!cloudAccount.username;
     overlay.innerHTML=`<div class="panel" role="dialog" aria-modal="true" aria-label="Bastion start">
       <div class="ov-mark">${IC.keep}</div>
       <h1>BASTION</h1>
       <p class="ov-tag">Directive 11 — thirty waves, endless beyond. Best march: <b class="gold">${bestWave}</b>.</p>
       ${corrupt?'<p class="ov-tag" style="color:#ffb4bf">⚠ Your saved march was corrupted and has been quarantined — starting fresh keeps everything else intact.</p>':''}
       <div class="menu-save">${hasSave?`<strong>CONTINUE — WAVE ${ps.data.waveNum+1}</strong><span>${ps.data.towers.length} towers · ${ps.data.lives} lives</span>`:'<strong>NEW JOURNEY</strong><span>Your progress saves automatically.</span>'}</div>
+      ${cloudAccount?`<div class="menu-identity"><strong>${needsUsername?'CHOOSE YOUR PLAYER ID':'PLAYER RECORD'}</strong><span id="recordIdentity"></span><form id="usernameForm"><input id="usernameInput" aria-label="Player ID" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Player ID"><button type="submit">${needsUsername?'SAVE ID':'CHANGE ID'}</button></form><small>${USERNAME_HINT}</small></div>`:''}
       <div class="menu-actions">
-        ${hasSave?'<button class="ov-btn" id="resumeBtn">▶ CONTINUE GAME</button>':''}
-        <button class="${hasSave?'ov-btn2':'ov-btn'}" id="startBtn">NEW GAME</button>
+        ${hasSave?`<button class="ov-btn" id="resumeBtn" ${needsUsername?'disabled':''}>▶ CONTINUE GAME</button>`:''}
+        <button class="${hasSave?'ov-btn2':'ov-btn'}" id="startBtn" ${needsUsername?'disabled':''}>NEW GAME</button>
         <button class="ov-btn2" id="menuSettings">SETTINGS</button>
       </div>
       <div class="menu-account"><span id="accountLabel"></span><button id="accountBtn" ${cloudAccount||cloudAvailable?'':'disabled'}>${cloudAccount?'SIGN OUT':'SIGN IN WITH GOOGLE'}</button></div>
@@ -1747,9 +1752,21 @@ function showOverlay(kind){
       ${guestSave?'<button class="ov-btn2" id="importGuestBtn">IMPORT GUEST SAVE</button>':''}
       <p class="menu-cloud-message" id="cloudMessage"></p>
       <p class="ov-keys">1–5 BUILD · SPACE WAVE · T THEME · P PAUSE</p></div>`;
-    $('accountLabel').textContent=cloudAccount?(cloudAccount.name||cloudAccount.email):'GUEST PLAYER';
-    $('cloudMessage').textContent=cloudMessage||(cloudAccount?'Progress syncs with your Google account.':'Sign in to keep progress across devices.');
+    $('accountLabel').textContent=cloudAccount?(cloudAccount.username?'@'+cloudAccount.username:(cloudAccount.name||cloudAccount.email)):'GUEST PLAYER';
+    $('cloudMessage').textContent=cloudMessage||(needsUsername?'Choose your player ID to continue.':cloudAccount?'Progress syncs with your Google account.':'Sign in to keep progress across devices.');
     $('menuSettings').onclick=showSettings;
+    if(cloudAccount){
+      $('recordIdentity').textContent=needsUsername?'Pick a unique name for your saved record.':`@${cloudAccount.username} · BEST WAVE ${Math.max(bestWave,cloudAccount.bestWave)}`;
+      $('usernameInput').value=cloudAccount.username;
+      $('usernameForm').onsubmit=async e=>{
+      e.preventDefault();
+      const button=$('usernameForm').querySelector('button');
+      button.disabled=true;
+      $('cloudMessage').textContent='Saving player ID…';
+      try{await setPlayerUsername($('usernameInput').value);cloudMessage='Player ID saved. Your record will use this name.';showOverlay('start');}
+      catch(err){cloudMessage=err instanceof Error?err.message:'Could not save player ID.';$('cloudMessage').textContent=cloudMessage;button.disabled=false;}
+      };
+    }
     $('accountBtn').onclick=async()=>{
       try{
         if(cloudAccount)await logOutOfGoogle();
@@ -1859,6 +1876,7 @@ function loadGame(){
     if(DEBUG)console.info('[BASTION] loaded schema v'+(d&&d.v)+' → migrated to v2');
     resetState();
     lives=s.lives;gold=s.gold;waveNum=s.waveNum;cleared=s.cleared;
+    bestWave=Math.max(bestWave,s.bestWave);saveBest(bestWave);
     endless=!!s.endless;kills=s.kills;goldEarned=s.goldEarned;
     Object.assign(MOD,s.MOD);
     for(const td of s.towers){
@@ -1921,6 +1939,7 @@ function endWave(){
   waveActive=false;cleared++;curMod=null;
   const b=Math.round((26+waveNum*4)*MOD.clearBonusMul);
   gold+=b;goldEarned+=b;
+  bestWave=Math.max(bestWave,cleared);saveBest(bestWave);
   saveGame(true);
   if(!endless&&cleared>=MAXW){ bestWave=Math.max(bestWave,cleared); saveBest(bestWave);
     state='win'; sfx('winT'); showOverlay('win'); return; }
