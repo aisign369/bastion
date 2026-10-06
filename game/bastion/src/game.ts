@@ -15,6 +15,7 @@ import { SAVE_OWNER_KEY, readMapSave, writeMapSave, deleteMapSave, switchStorage
 import { drawEmberField, drawEmberAtmosphere, EMBER_COVER } from './ember-art';
 import { drawFrontierField, drawFrontierAtmosphere, FROST_COVER, SUNSPIRE_COVER } from './frontier-art';
 import { createUnitMotion, advanceUnitMotion, gaitPose, bossGaitPose, hitReaction } from './unit-motion';
+import { getTowerSkin, getTowerArt, drawSkinHead, drawLegendary, towerPortrait, isLegendaryTower } from './tower-skins';
 import { startPhaserScene } from './phaser-scene';
 import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, USERNAME_HINT } from './cloud';
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
@@ -44,6 +45,7 @@ let bestWave=loadBest();
 /* ▲ GLM: debug + dev-test activation (never visible in normal play) */
 const DEBUG=(()=>{try{return /(?:debug|devtest)=1/.test(location.search);}catch(e){return false;}})();
 const MOTION_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('animationlab');
+const TOWER_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('towerlab');
 
 /* ▲ GLM PHASE 2 — gameplay RNG (seedable) vs cosmetic RNG.
    Gameplay-affecting randomness (elite rolls, spawn lane, card shuffle)
@@ -475,47 +477,52 @@ function boltP(g,x,y,ang,len,col,core){
   g.restore();
 }
 function shardP(g,x,y,ang,s){
+  const skin=getTowerSkin(activeMap.id,'frost');
   g.save();g.translate(x,y);g.rotate(ang);
-  g.strokeStyle=hexA(SPAL.ice,.6);g.lineWidth=2.5;g.lineCap='round';
+  g.strokeStyle=hexA(skin.energy,.6);g.lineWidth=2.5;g.lineCap='round';
   for(let i=-1;i<=1;i++){g.beginPath();g.moveTo(-s*1.9,i*4);g.lineTo(-s*.7,i*2);g.stroke();}
   poly(g,[[s,0],[s*.2,-s*.34],[-s*.7,-s*.24],[-s*.4,0],[-s*.7,s*.24],[s*.2,s*.34]]);
-  g.fillStyle=SPAL.iceL;g.fill();g.strokeStyle='#3e7fa8';g.lineWidth=2;g.stroke();
+  g.fillStyle=skin.light;g.fill();g.strokeStyle=skin.dark;g.lineWidth=2;g.stroke();
   g.restore();
 }
 function frostRing(g,x,y,s){
+  const skin=getTowerSkin(activeMap.id,'frost');
   g.save();g.translate(x,y);
   g.globalCompositeOperation='lighter';
   const gr=g.createRadialGradient(0,0,s*.2,0,0,s*1.25);
-  gr.addColorStop(0,hexA(SPAL.ice,.35));gr.addColorStop(1,'rgba(0,0,0,0)');
+  gr.addColorStop(0,hexA(skin.energy,.35));gr.addColorStop(1,'rgba(0,0,0,0)');
   g.fillStyle=gr;g.beginPath();g.arc(0,0,s*1.25,0,TAU);g.fill();
   g.globalCompositeOperation='source-over';
-  g.strokeStyle=SPAL.iceL;g.lineWidth=4;
+  g.strokeStyle=skin.light;g.lineWidth=4;
   g.beginPath();g.ellipse(0,0,s,s*.42,0,0,TAU);g.stroke();
   g.restore();
 }
 function shellP(g,x,y,ang,s){
+  const skin=getTowerSkin(activeMap.id,'mortar');
   g.save();g.translate(x,y);g.rotate(ang);
-  g.fillStyle='#a8a2b8';g.strokeStyle=SPAL.ol;g.lineWidth=2;
+  g.fillStyle=skin.metal;g.strokeStyle=skin.dark;g.lineWidth=2;
   rr(g,-s*.7,-s*.34,s*1.4,s*.68,s*.3);g.fill();g.stroke();
-  g.fillStyle=SPAL.bronze;g.fillRect(-s*.12,-s*.34,s*.24,s*.68);
-  g.fillStyle='#c8c2d4';g.beginPath();g.ellipse(s*.66,0,s*.16,s*.24,0,0,TAU);g.fill();g.stroke();
+  g.fillStyle=skin.trim;g.fillRect(-s*.12,-s*.34,s*.24,s*.68);
+  g.fillStyle=skin.edge;g.beginPath();g.ellipse(s*.66,0,s*.16,s*.24,0,0,TAU);g.fill();g.stroke();
   g.restore();
 }
 function railBeam(g,x0,y0,x1,y1,a){
+  const skin=getTowerSkin(activeMap.id,'rail');
   g.save();g.globalCompositeOperation='lighter';g.lineCap='round';
-  g.strokeStyle=hexA('#ff5c7a',.22*a);g.lineWidth=11;
+  g.strokeStyle=hexA(skin.energy,.22*a);g.lineWidth=11;
   g.beginPath();g.moveTo(x0,y0);g.lineTo(x1,y1);g.stroke();
-  g.strokeStyle=hexA('#ff5c7a',.9*a);g.lineWidth=4.5;g.stroke();
-  g.strokeStyle=hexA('#ffe9ef',a);g.lineWidth=1.8;g.stroke();
-  star4(g,x1,y1,16*a+3,'#ff8aa4');
+  g.strokeStyle=hexA(skin.energy,.9*a);g.lineWidth=4.5;g.stroke();
+  g.strokeStyle=hexA(skin.light,a);g.lineWidth=1.8;g.stroke();
+  star4(g,x1,y1,16*a+3,skin.energy);
   star4(g,x1,y1,7*a+2,'#fff');
   g.restore();
 }
 function zapPath(g,pts){
+  const skin=getTowerSkin(activeMap.id,'tesla');
   g.save();g.globalCompositeOperation='lighter';
-  g.strokeStyle=hexA('#57e6d0',.35);g.lineWidth=6;g.lineJoin='round';
+  g.strokeStyle=hexA(skin.energy,.35);g.lineWidth=6;g.lineJoin='round';
   g.beginPath();pts.forEach((p,i)=>i?g.lineTo(p[0],p[1]):g.moveTo(p[0],p[1]));g.stroke();
-  g.strokeStyle=hexA('#d8fff8',.95);g.lineWidth=2;g.stroke();
+  g.strokeStyle=hexA(skin.light,.95);g.lineWidth=2;g.stroke();
   g.restore();
 }
 function jagged(x0,y0,x1,y1,seed){
@@ -1090,7 +1097,7 @@ function headTesla(g,t){
   }
 }
 function drawTowerBody(t,ghost){
-  const col=TOWERS[t.key].color;
+  const col=getTowerSkin(activeMap.id,t.key).energy;
   ctx.save();ctx.translate(t.x,t.y);
   if(!ghost){
     ctx.save();ctx.globalAlpha=.35;ctx.fillStyle='#000';
@@ -1111,6 +1118,7 @@ function drawTowerBody(t,ghost){
   }
   if(ghost)ctx.globalAlpha=.62;
   ctx.drawImage(BASES[t.key],-48,-52,96,96);
+  if(!ghost&&isLegendaryTower(t.dmgLv,t.rateLv))drawLegendary(ctx,activeMap.id,t.key,artClock,ART.motion);
   if(!ghost&&t===sel){
     const R=28;
     ctx.strokeStyle=hexA(TPAL.acc,.9);ctx.lineWidth=1.8;
@@ -1367,6 +1375,7 @@ function applyTheme(ix){
   for(const k in th.ui)document.documentElement.style.setProperty(k,th.ui[k]);
   $('themeBtn').title='Theme: '+th.label+' (T)';
   buildStatic();
+  refreshTowerSkins();
 }
 function drawSky(){
   ctx.save();
@@ -1436,7 +1445,7 @@ const shopInfo=$('shopInfo');
 let shopHold=null,shopInfoTimer=0,suppressShopClick=false;
 function showShopInfo(row){
   const b=TOWERS[row.dataset.k],rect=row.getBoundingClientRect();
-  shopInfo.innerHTML=`<b>${b.name} · ${b.cost} GOLD</b><span>${b.desc}</span><span>DMG ${b.dmg} · RATE ${b.rate.toFixed(1)}/s · RANGE ${b.range}</span>`;
+  shopInfo.innerHTML=`<b>${b.name} · ${b.cost} GOLD</b><span>${getTowerSkin(activeMap.id,row.dataset.k).name} · ${activeMap.name}</span><span>${b.desc}</span><span>DMG ${b.dmg} · RATE ${b.rate.toFixed(1)}/s · RANGE ${b.range}</span>`;
   shopInfo.hidden=false;
   const w=shopInfo.offsetWidth,h=shopInfo.offsetHeight;
   shopInfo.style.left=Math.max(8,Math.min(innerWidth-w-8,rect.left+rect.width/2-w/2))+'px';
@@ -1465,6 +1474,8 @@ const insEl=$('inspector');
 const pips=l=>[0,1,2].map(i=>`<i class="pip${l>i?' on':''}"></i>`).join('');
 let insCostBtns=[],insAbBtn=null;
 function bindInspectorCaches(){
+  const key=placing||sel?.key,portrait=insEl.querySelector('.ins-head .sg');
+  if(key&&portrait){const img=document.createElement('img');img.src=towerPortrait(activeMap.id,key,sel&&!placing?sel.dmgLv:0,!!sel&&!placing&&isLegendaryTower(sel.dmgLv,sel.rateLv));img.alt='';portrait.replaceChildren(img);}
   insCostBtns=[...insEl.querySelectorAll('[data-cost]')];
   insAbBtn=insEl.querySelector('[data-act="abil"]');
 }
@@ -1474,7 +1485,7 @@ function renderInspector(){
     const b=TOWERS[placing];
     insEl.innerHTML=`
       <div class="ins-head"><span class="sg">${TG[placing](b.color)}</span>
-        <div><b>${b.name}</b><span class="ins-sub">${b.desc}</span></div></div>
+        <div><b>${b.name}</b><span class="skin-name">${getTowerSkin(activeMap.id,placing).name}</span><span class="ins-sub">${b.desc}</span></div></div>
       <div class="statgrid">
         <div><label>DAMAGE</label><b>${b.dmg}</b></div>
         <div><label>RATE</label><b>${b.rate.toFixed(1)}/s</b></div>
@@ -1496,6 +1507,7 @@ function renderInspector(){
       <button class="ins-close" data-act="close" aria-label="Close tower controls">×</button>
       <div class="ins-head"><span class="sg">${TG[t.key](b.color)}</span>
         <div><b>${b.name}<span class="mk">${MKS[t.dmgLv]}</span></b>
+        <span class="skin-name ${isLegendaryTower(t.dmgLv,t.rateLv)?'legendary':''}">${getTowerSkin(activeMap.id,t.key).name}${isLegendaryTower(t.dmgLv,t.rateLv)?' · LEGENDARY':''}</span>
         <span class="ins-sub">Grid ${t.c},${t.r}${t.disabledT>0?' — <span style="color:#ff9db0">DISABLED</span>':''}</span></div></div>
       <div class="piprows">
         <div class="pr"><span>DMG</span>${pips(t.dmgLv)}</div>
@@ -1867,7 +1879,7 @@ function showOverlay(kind){
 /* ---------- autosave (▲ GLM: schema v2 + throttled + forced milestones) ---------- */
 let lastSave=0;
 function saveGame(force){
-  if(MOTION_LAB)return;
+  if(MOTION_LAB||TOWER_LAB)return;
   if(state!=='play'&&state!=='cards')return;
   const n=performance.now();
   if(!force&&n-lastSave<4000)return;
@@ -2616,7 +2628,7 @@ function render(){
   for(const p of projs){
     if(p.kind==='shard')shardP(ctx,p.x,p.y,p.ang,8);
     else if(p.kind==='sabot')continue;
-    else boltP(ctx,p.x,p.y,p.ang,24,'#f2b45c','#fff2cf');
+    else {const skin=getTowerSkin(activeMap.id,'bolt');boltP(ctx,p.x,p.y,p.ang,24,skin.energy,skin.light);}
   }
   for(const z of zaps){
     const a=z.life/z.max;
@@ -3184,40 +3196,13 @@ rebakeSmooth();
 // The standard scale is retained; only the interpolated animation frame changes.
 const remasteredCreep=oldCreep;
 
-function artBase(key){bakeBase(key,g=>{const col=TOWERS[key].color;g.save();g.fillStyle='#060c17';g.beginPath();g.ellipse(1,7,34,20,0,0,TAU);g.fill();
-  poly(g,[[-30,-8],[-18,-21],[17,-21],[30,-7],[30,8],[16,21],[-17,21],[-30,7]]);g.fillStyle='#25394a';g.fill();g.strokeStyle='#101a29';g.lineWidth=3;g.stroke();
-  poly(g,[[-27,-9],[-17,-19],[16,-19],[27,-8],[26,5],[15,15],[-15,15],[-27,4]]);g.fillStyle='#556779';g.fill();g.strokeStyle='#a9babd88';g.lineWidth=1;g.stroke();
-  g.beginPath();g.ellipse(0,-1,21,13,0,0,TAU);g.fillStyle='#192b3b';g.fill();g.strokeStyle=hexA(col,.6);g.lineWidth=2;g.stroke();
-  g.beginPath();g.ellipse(0,-3,15,9,0,0,TAU);g.fillStyle='#3c5262';g.fill();
-  for(const x of [-22,22]){g.fillStyle='#172b39';g.fillRect(x-3,-5,6,9);g.fillStyle=col;g.fillRect(x-2,-4,4,2);}
-  for(const x of [-13,13]){artCircle(g,x,12,1.6,'#d3c5a4');}g.restore();});}
-TORDER.forEach(artBase);
 function artArmor(g,x,y,w,h,col){const f=g.createLinearGradient(x,y,x,y+h);f.addColorStop(0,lt(col,1.35));f.addColorStop(.48,col);f.addColorStop(1,lt(col,.65));rr(g,x,y,w,h,3);g.fillStyle=f;g.fill();g.strokeStyle='#101a26';g.lineWidth=1.8;g.stroke();g.strokeStyle='#d6e5e15c';g.lineWidth=.8;g.beginPath();g.moveTo(x+3,y+1);g.lineTo(x+w-3,y+1);g.stroke();}
-headBolt=function(g,lv,rc,fl){
-  g.save();g.translate(rc,0);const ys=lv===0?[0]:lv<3?[-5,5]:[-7,0,7];
-  for(const y of ys){artArmor(g,5,y-2.3,23+lv,4.6,'#788787');g.fillStyle='#1e303b';g.fillRect(23,y-3,4,6);g.fillStyle='#e3be81';g.fillRect(27,y-2.4,3,4.8);}
-  artArmor(g,-17,-10-lv,26,20+lv*2,'#827259');artArmor(g,-13,-8-lv,17,16+lv*2,'#bc9b62');
-  g.fillStyle='#253a46';for(let i=0;i<3;i++)g.fillRect(-11+i*4,-5,2,10);
-  artCircle(g,-1,0,4,'#344454','#e2c18b',1.4);artCircle(g,-1,0,1.6,'#f8e1ad');
-  for(let i=0;i<lv;i++)artArmor(g,-18,-12-i*3,10,3,'#bbc1a6');
-  if(fl>0)for(const y of ys)flame(g,32,y,0,(8+lv*2)*Math.min(1.5,fl/.06+.4));g.restore();
-};
-headLob=function(g,lv,rc,fl){g.save();g.rotate(-.85);artArmor(g,-14,-10,28,20,'#865e4c');
-  for(const x of (lv===3?[-7,7]:[0])){const w=lv===3?10:14+lv*2,top=-31-lv*2-rc;artArmor(g,x-w/2,top,w,34+lv*2,'#75818b');
-    g.fillStyle='#d5af7a';g.fillRect(x-w/2,-14,w,4);g.beginPath();g.ellipse(x,top,w*.6,4,0,0,TAU);g.fillStyle='#122331';g.fill();g.strokeStyle='#acbec2';g.lineWidth=2;g.stroke();
-    if(fl>0)flame(g,x,top-4,-Math.PI/2,11+lv*2);}
-  for(let i=0;i<lv+1;i++){g.fillStyle='#e5b47c';g.fillRect(-11+i*6,5,3,3);}g.restore();};
-headRail=function(g,t,rc,fl){const lv=t.dmgLv,L=39+lv*4,charge=Math.max(0,Math.min(1,1-t.cool*statRate(t)));g.save();g.translate(rc,0);
-  artArmor(g,-18,-9,20,18,'#915e71');for(const s of [-1,1]){artArmor(g,-5,s*6-3,L,6,'#8d9fad');g.fillStyle='#252d42';g.fillRect(2,s*6-1,L-9,2);}
-  g.fillStyle='#ec9aa9';g.fillRect(-8,-1.3,(L+6)*charge,2.6);for(let i=0;i<3+lv;i++){artArmor(g,i*7, -11,3,22,'#485468');}
-  artCircle(g,-11,0,4,'#ffced2','#442f43',1.5);if(fl>0){star4(g,L-3,0,17,'#ef99ad');star4(g,L-3,0,8,'#fff4e6');}g.restore();};
-headRime=function(g,t){const lv=t.dmgLv,bob=ART.motion?Math.sin(artClock*2.2+t.x)*1.5:0;g.save();g.translate(0,bob-5);
-  g.beginPath();g.ellipse(0,9,16+lv,7,0,0,TAU);g.strokeStyle='#78b9cb';g.lineWidth=2;g.stroke();
-  for(let i=0;i<3+lv;i++){const a=i*TAU/(3+lv)+(ART.motion?artClock*.45:0),x=Math.cos(a)*14,y=Math.sin(a)*7;g.save();g.translate(x,y);diamondPath(g,4+lv);g.fillStyle='#6faec5';g.fill();g.strokeStyle='#c2e3ed';g.lineWidth=1;g.stroke();g.restore();}
-  const h=17+lv*3;poly(g,[[0,-h],[9,0],[0,11],[-9,0]]);const f=g.createLinearGradient(-9,0,9,0);f.addColorStop(0,'#5685a6');f.addColorStop(.48,'#d6f5f0');f.addColorStop(.52,'#a5dbe7');f.addColorStop(1,'#417698');g.fillStyle=f;g.fill();g.strokeStyle='#d9f5e9';g.lineWidth=1.2;g.stroke();
-  artGlow(g,0,0,19,'#c0edf5',.17);g.restore();};
-const legacyTesla=headTesla;
-headTesla=function(g,t){legacyTesla(g,t);g.save();g.strokeStyle='#a2d3bc';g.lineWidth=2;for(const s of [-1,1]){g.beginPath();g.moveTo(s*10,12);g.lineTo(s*14,-4-t.dmgLv*3);g.lineTo(s*9,-10-t.dmgLv*3);g.stroke();artCircle(g,s*9,-10-t.dmgLv*3,2.5,'#d1efc9','#264747');}g.restore();};
+function refreshTowerSkins(){decorateShop();hideShopInfo();}
+headBolt=function(g,lv,rc,fl){drawSkinHead(g,activeMap.id,'bolt',lv,rc,fl,artClock,ART.motion);};
+headLob=function(g,lv,rc,fl){drawSkinHead(g,activeMap.id,'mortar',lv,rc,fl,artClock,ART.motion);};
+headRail=function(g,t,rc,fl){drawSkinHead(g,activeMap.id,'rail',t.dmgLv,rc,fl,artClock,ART.motion);};
+headRime=function(g,t){drawSkinHead(g,activeMap.id,'frost',t.dmgLv,0,0,artClock+t.x*.01,ART.motion);};
+headTesla=function(g,t){drawSkinHead(g,activeMap.id,'tesla',t.dmgLv,0,t.flash,artClock+t.x*.01,ART.motion);};
 
 drawTowerBody=function(t,ghost){
   // Old body retains its original RNG effects and rendering order.
@@ -3225,7 +3210,7 @@ drawTowerBody=function(t,ghost){
   if(ghost)return;
   let v=visualTowers.get(t);if(!v){v={born:artClock,level:t.dmgLv,upgrade:-10};visualTowers.set(t,v);}
   if(v.level!==t.dmgLv){v.level=t.dmgLv;v.upgrade=artClock;}
-  const age=artClock-v.born,up=artClock-v.upgrade,color=TOWERS[t.key].color;
+  const age=artClock-v.born,up=artClock-v.upgrade,color=getTowerSkin(activeMap.id,t.key).energy;
   ctx.save();
   if(ART.motion&&(age<.6||up<.7)){const p=age<.6?age/.6:up/.7;ctx.globalAlpha=(1-p)*.7;ctx.strokeStyle=color;ctx.lineWidth=2;ctx.beginPath();ctx.ellipse(t.x,t.y+4,18+p*20,10+p*10,0,0,TAU);ctx.stroke();
     for(let j=0;j<6;j++){const a=j*TAU/6;star4(ctx,t.x+Math.cos(a)*(15+p*12),t.y+Math.sin(a)*9-p*30,2*(1-p),color);}}
@@ -3318,9 +3303,14 @@ const COVER=`<svg viewBox="0 0 460 550" xmlns="http://www.w3.org/2000/svg" aria-
 showOverlay=function(kind){oldOverlay(kind);if(kind==='start'){const panel=overlay.querySelector('.panel');if(!panel)return;panel.classList.add('deployment');panel.dataset.map=activeMap.id;const brief=document.createElement('div');brief.className='briefing';while(panel.firstChild)brief.appendChild(panel.firstChild);const eyebrow=document.createElement('span');eyebrow.className='eyebrow';eyebrow.textContent=activeMap.name+' / '+activeMap.sector;brief.prepend(eyebrow);const art=document.createElement('div');art.className='cover-art';art.innerHTML=({orchid:COVER,ember:EMBER_COVER,frost:FROST_COVER,sunspire:SUNSPIRE_COVER}[activeMap.id])+'<div class="cover-caption"><b>'+activeMap.caption+'</b>Thirty waves. One road. Your bastion.</div>';panel.append(art,brief);const fb=brief.querySelector('.ov-btn');if(fb&&!fb.disabled){try{fb.focus({preventScroll:true});}catch(e){}}}};
 
 // Consistent miniature portraits are baked from the actual tower painters.
-function decorateShop(){for(const k of TORDER){const c=document.createElement('canvas');c.width=112;c.height=112;const g=c.getContext('2d');g.scale(2,2);g.translate(28,31);g.drawImage(BASES[k],-28,-30,56,56);g.scale(.78,.78);const t={x:0,y:0,key:k,dmgLv:0,rateLv:0,spin:0,cool:0,abCd:0};
-    if(k==='bolt'){g.rotate(-.6);headBolt(g,0,0,0);}else if(k==='mortar')headLob(g,0,0,0);else if(k==='rail'){g.rotate(-.6);headRail(g,t,0,0);}else if(k==='frost')headRime(g,t);else{artArmor(g,-3,-5,6,20,'#6a9995');for(let i=0;i<3;i++){artCircle(g,0,-i*7,7-i,'#89d4be','#254651',1.5);artCircle(g,-2,-i*7-2,2,'#e3f4d0');}}
-    const row=shopEl.querySelector('[data-k="'+k+'"]');const img=document.createElement('img');img.src=c.toDataURL();img.alt='';row.querySelector('.sg').replaceChildren(img);}}
+function decorateShop(){
+  const art=getTowerArt(activeMap.id);
+  for(const k of TORDER){
+    BASES[k]=art.bases[k];
+    const img=document.createElement('img');img.src=towerPortrait(activeMap.id,k);img.alt='';
+    shopEl.querySelector('[data-k="'+k+'"] .sg').replaceChildren(img);
+  }
+}
 decorateShop();
 const track=document.createElement('div');track.className='wave-track';track.innerHTML='<span id="artStatus">DEFENSE PERIMETER</span><i><span id="artProgress"></span></i><strong id="artWave">AWAITING DEPLOYMENT</strong>';document.getElementById('boardWrap').append(track);
 const footer=document.createElement('div');footer.className='field-footer';footer.innerHTML='<span><b>ORCHID RESERVE</b> &nbsp;/&nbsp; SECTOR 11 &nbsp;·&nbsp; TACTICAL DEFENSE</span><span>1–5 SELECT &nbsp;·&nbsp; SHIFT BUILD &nbsp;·&nbsp; SPACE WAVE &nbsp;·&nbsp; P PAUSE</span>';document.querySelector('main').after(footer);
@@ -3413,6 +3403,10 @@ const BASTION_TESTS={
     T.t('abilities: every MK-IV has name+cooldown',()=>{for(const k of TORDER){
       T.ok(typeof TOWERS[k].abName==='string'&&TOWERS[k].abName.length>0,k);
       T.ok(TOWERS[k].abCd>0,k);}});
+    T.t('legendary: both upgrade tracks must be maxed',()=>{
+      for(let damage=0;damage<=3;damage++)for(let rate=0;rate<=3;rate++)
+        T.eq(isLegendaryTower(damage,rate),damage===3&&rate===3);
+    });
     // -- waves --
     T.t('waves: wave 1 composition sane',()=>{const d=waveDef(1);
       T.ok(d.groups.some(g=>g.t==='runner'));
@@ -3499,7 +3493,7 @@ muted=PREFS.muted;
 applyMotion();
 applyTheme(PREFS.themeIx);
 renderPreview(1);renderInspector();showOverlay('start');
-if(!MOTION_LAB)observeCloud(next=>{
+if(!MOTION_LAB&&!TOWER_LAB)observeCloud(next=>{
   cloudAvailable=next.available;
   cloudMessage=next.error||'';
   if(!next.error){
@@ -3509,6 +3503,32 @@ if(!MOTION_LAB)observeCloud(next=>{
   if(state==='menu')showOverlay('start');
 });
 startPhaserScene(cv,renderCanvas,()=>frame(performance.now()),W,H);
+// Local art fixture paints the production sprites and never writes player saves.
+if(TOWER_LAB){
+  const panel=document.createElement('div');panel.id='towerLab';panel.style.cssText='position:fixed;inset:0;z-index:99;background:#101b2a;overflow:auto;padding:20px;color:#ecdfc4';
+  panel.innerHTML='<h2 style="font:20px monospace;margin:0 0 12px">BASTION / FOUR MAP ARMORIES</h2><div id="towerLabButtons" style="display:flex;gap:8px;flex-wrap:wrap"></div><canvas id="towerGallery" width="1200" height="648" style="width:100%;max-width:1200px;height:auto;display:block"></canvas>';
+  document.body.append(panel);
+  const controls=$('towerLabButtons');
+  const button=(label,action)=>{const b=document.createElement('button');b.textContent=label;b.style.cssText='padding:8px;background:#30465b;color:#fff1d1;border:1px solid #a3bbc5;border-radius:5px';b.onclick=action;controls.append(b);};
+  const gallery=(lv,full)=>{
+    $('towerGallery').style.display='block';panel.style.inset='0';panel.style.bottom='0';
+    const g=$('towerGallery').getContext('2d');g.clearRect(0,0,1200,648);
+    TORDER.forEach((key,i)=>{g.fillStyle='#e6d7b7';g.font='bold 14px monospace';g.fillText(TOWERS[key].name,230+i*194,25);});
+    MAPS.forEach((map,row)=>{const y=66+row*145,art=getTowerArt(map.id);
+      g.fillStyle=map.background;g.fillRect(0,y-22,1198,136);g.fillStyle=map.accent;g.font='bold 14px monospace';g.fillText(map.name,16,y+34);g.font='11px monospace';g.fillText(full?'MK-IV / LEGENDARY':'MK-'+['I','II','III','IV'][lv],16,y+56);
+      TORDER.forEach((key,i)=>{g.save();g.translate(276+i*194,y+37);g.scale(1.5,1.5);g.drawImage(art.bases[key],-48,-52,96,96);if(full)drawLegendary(g,map.id,key,0,false);g.save();g.scale(.8,.8);if(key==='bolt'||key==='rail')g.rotate(-.55);drawSkinHead(g,map.id,key,lv,0,0,0,false);g.restore();g.restore();g.fillStyle='#e6d7b7';g.font='10px monospace';g.fillText(getTowerSkin(map.id,key).name,220+i*194,y+90);});
+    });getTowerArt(activeMap.id);
+  };
+  button('ALL SKINS',()=>gallery(0,false));button('MK-II',()=>gallery(1,false));button('MK-III',()=>gallery(2,false));button('MK-IV',()=>gallery(3,false));button('LEGENDARY',()=>gallery(3,true));
+  MAPS.forEach(map=>button(map.name,()=>{
+    $('towerGallery').style.display='none';panel.style.inset='auto 8px 8px';state='menu';chooseMap(map.id);resetState();state='play';idleOn=false;overlay.style.display='none';
+    for(let i=0;i<TORDER.length;i++)for(let lv=0;lv<4;lv++){
+      const key=TORDER[i],c=2+i*6,r=lv<2?1+lv*4:6+lv*2;
+      if(!isBuildableOnMap(map.id,c,r))continue;
+      const t={key,c,r,x:(c+.5)*CELL,y:(r+.5)*CELL,ang:-.5,cool:0,dmgLv:lv,rateLv:lv,invested:50,mode:'first',flash:0,recoil:0,spin:0,kills:0,abCd:0,odT:0,disabledT:0};towers.push(t);towerAt.set(c+','+r,t);
+    }gold=10000;renderInspector();hudFrame();showBanner(map.name,'LOCAL TOWER PREVIEW / ALL UPGRADE LEVELS');
+  }));gallery(0,false);
+}
 // Local development fixture: exercise every rig and effect without writing player progress.
 if(MOTION_LAB){
   const lab=document.createElement('div');lab.style.cssText='position:fixed;left:30px;bottom:8px;z-index:99;display:flex;gap:8px;padding:8px;background:#111d2eee;border:1px solid #a8cbe0;border-radius:8px';
@@ -3533,5 +3553,5 @@ if(/devtest=1/.test(location.search)){
   setTimeout(()=>{const ok=BASTION_TESTS.runAll();BASTION_TESTS.report();
     showBanner(ok?'DEV TESTS: ALL PASS':'DEV TESTS: FAILURES',BASTION_TESTS.pass+' passed · '+BASTION_TESTS.fail+' failed — see console',ok?'':'bad');},600);
 }
-window.BASTION={version:'living-units-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
+window.BASTION={version:'map-armories-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
 

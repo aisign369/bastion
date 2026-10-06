@@ -37,7 +37,7 @@ Choose from four battlefields in the start menu:
 - **Orchid Reserve** — the original winding garden road.
 - **Ember Rift** — a basalt caldera with three riveted bridges over a molten fault. Lava blocks construction.
 - **Frostwatch** — a snowy outpost, fractured glacial lake and eastern switchbacks. Thin lake ice blocks construction.
-- **Sunspire Ruins** — sandstone ruins around an oasis, with a southern hairpin for overlapping fire. Oasis water blocks construction.
+- **Sunspire Ruins** — sandstone ruins around an oasis, three tiered Egyptian pyramids above the northern road and a southern hairpin for overlapping fire. Oasis water blocks construction; pyramids are background scenery and preserve all existing buildable cells and saves.
 
 Each has its own route, cover illustration, terrain, keep and ambient effects. All four support the existing thirty waves, endless mode, upgrades, selling, pinch zoom and FIT. Terrain is rendered into the static board cache; the modest particle count follows the existing quality and reduced-motion preferences.
 
@@ -50,6 +50,12 @@ Run `npm run test:maps` with Node 22.6+ for route, bridge, save migration and ac
 Each mechanical type uses a distinct cached 24-frame gait. Footstep phase follows actual path distance, including slows, haste and game-speed changes. Boss legs use inverse kinematics with a grounded support foot; shades have a 16-frame flowing cloak. Turning eases the body and facing, while brief weighted hit reactions affect presentation only. Mechanical deaths break the current sprite into falling armor fragments; shades dissolve upward. At most 12 death echoes are retained, with fewer fragments at low quality. Pause freezes the pose and reduced motion uses still sprites.
 
 Run `npm run test:motion` for frame-rate independence, slow/speed behavior, pause, stopped units, shortest-path turns, grounded boss feet and hit decay. The existing in-game tests also lock gameplay balance. A development-only `?animationlab=1&devtest=1` fixture previews all eight enemy types, slow/hit/death effects and a 40-unit crowd without saving or connecting to player accounts. This fixture is disabled in production builds.
+
+## Map armories
+
+Every tower has a map-specific skin, including all four damage-upgrade silhouettes, base, portrait, energy color and firing effects. Orchid uses petal armor and vine coils; Ember uses forge vents and basalt armor; Frostwatch uses ice crystals and snow caps; Sunspire uses scarab crests, sun spears and obelisks. Fully upgrading **both damage and rate** adds persistent legendary ornaments and a LEGENDARY label; damage MK-IV alone still unlocks the normal ability. Skins do not change combat stats, prices, tower keys or save format.
+
+`tower-skins.ts` caches only the selected map's five bases and twenty heads, with portraits reused for the shop and inspector. Reduced motion keeps the ornaments while freezing ambient animation. A development-only `?towerlab=1&devtest=1` gallery shows all twenty skins and every upgrade level, plus on-map fixtures. It skips player-save writes and account observation; the fixture is excluded from production builds.
 
 ## Mobile controls
 

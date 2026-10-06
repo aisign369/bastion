@@ -30,7 +30,7 @@ export const MAPS: readonly MapDefinition[] = [
   { id: 'sunspire', name: 'SUNSPIRE RUINS', sector: 'SECTOR 14',
     background: '#594333', hazardColor: '#419c96', hazardLabel: 'OASIS',
     subtitle: 'THE DUNES / ANCIENT OASIS', accent: '#f5cd86',
-    briefing: 'Hold the ancient sun gate. The oasis blocks construction; the southern hairpin gives your towers a second firing window.',
+    briefing: 'Defend the sun gate beneath three ancient pyramids. The oasis blocks construction; the southern hairpin gives your towers a second firing window.',
     caption: 'THE SANDS REMEMBER EVERY SIEGE',
     route: [[-1,9],[5,9],[5,3],[23,3],[23,13],[8,13],[8,16],[27,16],[27,7],[30,7]],
     blocked: Array.from({length:4},(_,r)=>r+7).flatMap(r=>Array.from({length:6},(_,c)=>[c+10,r] as GridPoint)) },
@@ -66,5 +66,6 @@ export function mapPreview(map: MapDefinition): string {
   const points=map.route.map(([c,r])=>`${(c+.5)*10},${(r+.5)*10}`).join(' ');
   const terrain=map.blocked.map(([c,r])=>`<rect x="${c*10}" y="${r*10}" width="10" height="10" fill="${map.hazardColor}" opacity=".6"/>`).join('');
   const [gc,gr]=map.route.at(-1)!;
-  return `<svg viewBox="0 0 320 180" aria-hidden="true"><rect width="320" height="180" rx="12" fill="${map.background}"/>${terrain}<polyline points="${points}" fill="none" stroke="#101c29" stroke-width="14" stroke-linejoin="round"/><polyline points="${points}" fill="none" stroke="${map.accent}" stroke-width="6" stroke-linejoin="round"/><circle cx="${(gc+.5)*10}" cy="${(gr+.5)*10}" r="7" fill="#f5e7cb"/></svg>`;
+  const pyramids=map.id==='sunspire'?'<g fill="#d9b577"><path d="M79 24L94 3 109 24 95 27Z"/><path d="M146 24L163 2 183 24 165 28Z"/><path d="M270 24L284 5 299 24 285 27Z"/></g><g fill="#997048"><path d="M94 3L109 24 95 27Z"/><path d="M163 2L183 24 165 28Z"/><path d="M284 5L299 24 285 27Z"/></g>':'';
+  return `<svg viewBox="0 0 320 180" aria-hidden="true"><rect width="320" height="180" rx="12" fill="${map.background}"/>${terrain}${pyramids}<polyline points="${points}" fill="none" stroke="#101c29" stroke-width="14" stroke-linejoin="round"/><polyline points="${points}" fill="none" stroke="${map.accent}" stroke-width="6" stroke-linejoin="round"/><circle cx="${(gc+.5)*10}" cy="${(gr+.5)*10}" r="7" fill="#f5e7cb"/></svg>`;
 }

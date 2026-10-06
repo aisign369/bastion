@@ -65,6 +65,7 @@ canvas{display:block;width:100%;height:auto;border:1px solid var(--line);cursor:
 .ins-head{display:flex;gap:11px;align-items:center;margin-bottom:11px}
 .ins-head .sg{width:30px;height:30px}
 .ins-head b{display:block;font-size:14px;font-weight:700;letter-spacing:.18em}
+.skin-name{display:block;font:8px/1.5 Consolas,monospace;letter-spacing:.04em;color:#b7c9ce;margin:3px 0;overflow-wrap:anywhere}.skin-name.legendary{color:#ffe0a0}
 .mk{font-size:9px;color:var(--red);letter-spacing:.2em;font-family:'IBM Plex Mono',monospace;vertical-align:2px;margin-left:5px}
 .ins-sub{display:block;font-size:10.5px;color:var(--dim);margin-top:2px;line-height:1.4}
 .ih-mark svg{width:22px;height:22px;stroke:var(--acc);fill:none;stroke-width:2;stroke-linejoin:round}

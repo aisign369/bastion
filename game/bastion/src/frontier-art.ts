@@ -23,6 +23,27 @@ function pine(g:CanvasRenderingContext2D,x:number,y:number,s:number){
   for(let j=0;j<3;j++){const yy=y-j*s*.35,w=s*(1-j*.2);polygon(g,[[x-w,yy],[x,yy-s*1.1],[x+w,yy]],'#36576b');polygon(g,[[x-w*.7,yy-s*.32],[x,yy-s*1.1],[x+w*.7,yy-s*.32],[x,yy-s*.45]],'#d7edf3');}
 }
 
+function pyramid(g:CanvasRenderingContext2D,x:number,y:number,w:number,h:number){
+  g.save();g.translate(x,y);
+  // Background monuments leave the northern road clear; towers always paint above them.
+  polygon(g,[[-w,-1],[0,-h],[w,0],[w+30,17],[12,23]],'#4d3b313b');
+  const face=[[-w,0],[-10,-h],[0,17],[w,0]];
+  polygon(g,face,'#d9b577');
+  polygon(g,[[-10,-h],[w,0],[0,17]],'#997048');
+  polygon(g,[[-10,-h],[-10,-h+16],[-w,0]],'#f0d09755');
+  g.save();g.beginPath();face.forEach(([xx,yy],i)=>i?g.lineTo(xx,yy):g.moveTo(xx,yy));g.closePath();g.clip();
+  for(let j=1;j<=12;j++){
+    const yy=-h+j*(h+17)/12;
+    g.strokeStyle='#6f503b55';g.lineWidth=1.1;g.beginPath();g.moveTo(-w,yy);g.lineTo(w,yy);g.stroke();
+    g.strokeStyle='#ffe3a63b';g.beginPath();g.moveTo(-w,yy-1.5);g.lineTo(w,yy-1.5);g.stroke();
+    for(let xx=-w+(j%2)*12;xx<w;xx+=24){g.strokeStyle='#77583d44';g.beginPath();g.moveTo(xx,yy);g.lineTo(xx+1,yy-(h+17)/12);g.stroke();}
+  }g.restore();
+  g.strokeStyle='#ffe4aa88';g.lineWidth=1.3;g.beginPath();g.moveTo(-w,0);g.lineTo(-10,-h);g.lineTo(0,17);g.stroke();
+  polygon(g,[[-15,7],[-15,-4],[-9,-10],[-3,-2],[-3,12]],'#634932');
+  g.strokeStyle='#efcc8b';g.lineWidth=1.4;g.beginPath();g.moveTo(-16,6);g.lineTo(-16,-5);g.lineTo(-9,-12);g.lineTo(-2,-3);g.lineTo(-2,12);g.stroke();
+  g.restore();
+}
+
 /** Static terrain is cached with the board. Cosmetic noise never advances gameplay RNG. */
 export function drawFrontierField(g:CanvasRenderingContext2D):void{
   const frost=activeMap.id==='frost';
@@ -65,6 +86,7 @@ export function drawFrontierField(g:CanvasRenderingContext2D):void{
       if(i%5===0){g.fillStyle='#e2c48c';g.fillRect(px-4,py-17,8,14);g.fillStyle='#654b3c';g.fillRect(px-7,py-20,14,4);g.strokeStyle='#8c6748';g.lineWidth=1;g.strokeRect(px-4,py-17,8,14);}
     }
   }
+  if(!frost){pyramid(g,456,112,66,96);pyramid(g,792,112,88,105);pyramid(g,1368,114,72,94);}
   road(g,frost);
   // Border scenery is above/below all route rows, so no playable cell is obscured.
   for(let i=0;i<25;i++){const px=i*65;polygon(g,[[px-24,0],[px+9,22+noise(i+21)*15],[px+49,0]],frost?'#648498':'#6b5143');if(frost)polygon(g,[[px-24,0],[px+9,14],[px+49,0]],'#e6f4f7');}
@@ -113,6 +135,8 @@ export const SUNSPIRE_COVER=`<svg viewBox="0 0 460 550" xmlns="http://www.w3.org
 <defs><linearGradient id="sSky" x2="0" y2="1"><stop stop-color="#393747"/><stop offset="1" stop-color="#c79b74"/></linearGradient><linearGradient id="sSand" x2=".5" y2="1"><stop stop-color="#d6b47c"/><stop offset="1" stop-color="#795344"/></linearGradient></defs>
 <rect width="460" height="550" fill="url(#sSky)"/><circle cx="319" cy="124" r="60" fill="#f5d59d" opacity=".7"/><circle cx="319" cy="124" r="83" fill="#f5d59d" opacity=".06"/>
 <path d="M0 256L67 233 146 251 222 214 315 249 391 231 460 265V550H0Z" fill="#82604f"/>
+<g stroke="#f0d094" stroke-width="1"><path d="M24 256L83 174 147 258 87 274Z" fill="#d4af74"/><path d="M83 174L147 258 87 274Z" fill="#94704e"/><path d="M126 266L203 139 289 269 211 288Z" fill="#e0bc7e"/><path d="M203 139L289 269 211 288Z" fill="#9e764e"/><path d="M316 263L366 193 420 265 370 280Z" fill="#caa371"/><path d="M366 193L420 265 370 280Z" fill="#8e684a"/></g>
+<path d="M56 211H111M47 224H121M38 239H134M170 193H240M159 211H252M148 230H266M137 248H277M345 222H387M333 241H401" fill="none" stroke="#72513b" opacity=".4"/>
 <path d="M0 322Q92 243 207 302T460 279V550H0Z" fill="url(#sSand)"/><path d="M0 414Q103 335 237 401T460 357V550H0Z" fill="#b58c60"/>
 <ellipse cx="159" cy="361" rx="92" ry="40" fill="#ddc291"/><ellipse cx="159" cy="361" rx="80" ry="31" fill="#32676c"/><path d="M101 355Q146 342 204 357M118 368Q163 358 212 369" stroke="#9bc7a5" opacity=".6" fill="none"/>
 <path d="M0 387L47 397 58 276 285 279 301 429 127 439 138 482 372 486 375 332 460 328" fill="none" stroke="#795941" stroke-width="25"/><path d="M0 387L47 397 58 276 285 279 301 429 127 439 138 482 372 486 375 332 460 328" fill="none" stroke="#e0bb80" stroke-width="14"/>
