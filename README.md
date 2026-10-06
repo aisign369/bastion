@@ -30,6 +30,14 @@ Firebase's web configuration is in `.env.production`. These four values identify
 
 The Firebase Console's Authentication → Users and Firestore → Data pages show signed-in players and their saved profiles. An email-sending service and owner-facing dashboard are not part of this release; collecting update consent here prepares for those features later.
 
+## Battlefields
+
+Choose **Orchid Reserve** or **Ember Rift** from the start menu. Ember Rift is a basalt caldera with a new route, three riveted bridges over a molten fault, warm lighting and drifting embers. Lava cells cannot hold towers. Both maps support the existing thirty waves, endless mode, upgrades, selling, pinch zoom and FIT.
+
+Each map has its own journey and best-wave record for each guest/account. Schema v3 adds `mapId`; v1/v2 saves migrate to Orchid without copying towers into Ember. Local saves are separated by account and map. Firebase stores `mapSaves.orchid`, `mapSaves.ember` and matching `mapRecords`; the legacy `save` field remains an Orchid backup. Owner-only Firestore rules continue to cover these fields.
+
+Run `npm run test:maps` with Node 22.6+ for route, bridge, save migration and account-isolation checks. `?devtest=1` runs the in-game checks on the selected battlefield.
+
 ## Mobile controls
 
 Tap a tower type and then a free cell to build. Hold a tower type for details. Tap a built tower to upgrade or sell. Drag with one finger; pinch with two fingers to zoom. FIT shows the whole map.

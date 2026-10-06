@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
 import { doc, getDoc, getFirestore, runTransaction, setDoc } from 'firebase/firestore';
+import { isMapId, type MapId } from './maps';
 
 export type CloudAccount = {
   uid: string;
@@ -9,6 +10,8 @@ export type CloudAccount = {
   username: string;
   usernameKey: string;
   bestWave: number;
+  mapSaves: Partial<Record<MapId, unknown>>;
+  mapRecords: Partial<Record<MapId, number>>;
   updatesOptIn: boolean;
   save: unknown;
 };
@@ -27,7 +30,7 @@ const app = available ? initializeApp(config) : null;
 const auth = app ? getAuth(app) : null;
 const db = app ? getFirestore(app) : null;
 let currentUser: User | null = null;
-let pendingSave: unknown = null;
+const pendingSaves = new Map<MapId, unknown>();
 let pendingSaveUid: string | null = null;
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSyncAt = 0;
@@ -53,7 +56,7 @@ export function observeCloud(callback: (state: CloudState) => void): void {
   }
   onAuthStateChanged(auth, async user => {
     if (pendingSaveUid && pendingSaveUid !== user?.uid) {
-      pendingSave = null;
+      pendingSaves.clear();
       pendingSaveUid = null;
       if (syncTimer) clearTimeout(syncTimer);
       syncTimer = null;
@@ -81,6 +84,7 @@ export function observeCloud(callback: (state: CloudState) => void): void {
         username: typeof existing?.username === 'string' ? existing.username : '',
         usernameKey: typeof existing?.usernameKey === 'string' ? existing.usernameKey : '',
         bestWave: Math.max(recordScore(existing?.bestWave), recordScore(existing?.save?.bestWave)),
+        mapSaves: existing?.mapSaves ?? {}, mapRecords: existing?.mapRecords ?? {},
         updatesOptIn: existing?.updatesOptIn === true, save: existing?.save ?? null,
       });
     } catch (error) {
@@ -137,35 +141,47 @@ export async function setUpdateEmails(enabled: boolean): Promise<void> {
 
 export function queueCloudSave(save: unknown): void {
   if (!currentUser || !db) return;
-  pendingSave = save;
+  const mapId=(save as { mapId?: unknown })?.mapId ?? 'orchid';
+  if (!isMapId(mapId)) return;
+  pendingSaves.set(mapId, save);
   pendingSaveUid = currentUser.uid;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = setTimeout(() => { void flushCloudSave(); }, Math.max(1500, 15000 - (Date.now() - lastSyncAt)));
 }
 
 export async function flushCloudSave(): Promise<void> {
-  if (!db || !currentUser || !pendingSave || pendingSaveUid !== currentUser.uid) return;
+  if (!db || !currentUser || !pendingSaves.size || pendingSaveUid !== currentUser.uid) return;
   if (syncTimer) clearTimeout(syncTimer);
   syncTimer = null;
-  const save = pendingSave;
+  const saves = new Map(pendingSaves);
   const uid = currentUser.uid;
-  pendingSave = null;
+  pendingSaves.clear();
   pendingSaveUid = null;
   try {
-    await setDoc(doc(db, 'players', uid), { save, saveUpdatedAt: Date.now() }, { merge: true });
-    const score = recordScore((save as { bestWave?: unknown }).bestWave);
-    if (score > (currentAccount?.uid === uid ? currentAccount.bestWave : 0)) {
-      await runTransaction(db, async transaction => {
-        const playerRef = doc(db, 'players', uid);
-        const player = await transaction.get(playerRef);
-        if (score > recordScore(player.data()?.bestWave)) transaction.set(playerRef, { bestWave: score, recordUpdatedAt: Date.now() }, { merge: true });
-      });
-      if (currentAccount?.uid === uid) currentAccount.bestWave = score;
+    await setDoc(doc(db, 'players', uid), {
+      mapSaves: Object.fromEntries(saves), saveUpdatedAt: Date.now(),
+      ...(saves.has('orchid') ? {save:saves.get('orchid')} : {}),
+    }, { merge: true });
+    const records=await runTransaction(db, async transaction => {
+      const playerRef=doc(db!, 'players',uid), player=await transaction.get(playerRef);
+      const mapRecords: Partial<Record<MapId,number>>={...player.data()?.mapRecords};
+      let bestWave=recordScore(player.data()?.bestWave);
+      for(const [mapId,save] of saves){
+        const score=recordScore((save as {bestWave?:unknown}).bestWave);
+        mapRecords[mapId]=Math.max(recordScore(mapRecords[mapId]),score);
+        bestWave=Math.max(bestWave,score);
+      }
+      transaction.set(playerRef,{mapRecords,bestWave,recordUpdatedAt:Date.now()},{merge:true});
+      return {mapRecords,bestWave};
+    });
+    if(currentAccount?.uid===uid){
+      Object.assign(currentAccount,records);
+      Object.assign(currentAccount.mapSaves,Object.fromEntries(saves));
     }
     lastSyncAt = Date.now();
   } catch (error) {
-    if (currentUser?.uid === uid && !pendingSave) {
-      pendingSave = save;
+    if (currentUser?.uid === uid) {
+      for(const [mapId,save] of saves)if(!pendingSaves.has(mapId))pendingSaves.set(mapId,save);
       pendingSaveUid = uid;
     }
     console.warn('Cloud save failed; local save is safe.', error);

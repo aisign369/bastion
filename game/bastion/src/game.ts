@@ -9,7 +9,10 @@
    dev test harness, adaptive quality, settings, touch, a11y.
    + BOSS WALK RIG: 12-frame interpolated stomp cycle (cosmetic).
    ============================================================ */
-import { CELL, COLS, ROWS, W, H, WPC, WAY, BREACH, GATE, SEGS, PATHLEN, posAt, pathSet } from './path';
+import { CELL, COLS, ROWS, W, H, WPC, WAY, BREACH, GATE, SEGS, PATHLEN, posAt, pathSet, blockedSet, activeMap, activateMap } from './path';
+import { MAPS, getMap, isMapId, isBuildableOnMap, mapPreview } from './maps';
+import { SAVE_OWNER_KEY, readMapSave, writeMapSave, deleteMapSave, switchStorageOwner } from './map-storage';
+import { drawEmberField, drawEmberAtmosphere, EMBER_COVER } from './ember-art';
 import { startPhaserScene } from './phaser-scene';
 import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, USERNAME_HINT } from './cloud';
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
@@ -25,12 +28,15 @@ const lt=(h,f)=>{const n=parseInt(h.slice(1),16);
   const r=Math.min(255,Math.round((n>>16&255)*f)),g=Math.min(255,Math.round((n>>8&255)*f)),b=Math.min(255,Math.round((n&255)*f));
   return `rgb(${r},${g},${b})`;};
 const dr=i=>{const v=Math.sin(i*127.13+311.7)*43758.5453;return v-Math.floor(v);};
-const BEST_KEY='bastion_orchid_best', SAVE_KEY='bastion_orchid_save';
-const SAVE_OWNER_KEY='bastion_orchid_save_owner';
+const BEST_KEY='bastion_orchid_best', MAP_KEY='bastion_selected_map';
+try{activateMap(localStorage.getItem(MAP_KEY));}catch(e){}
+const saveOwner=()=>localStorage.getItem(SAVE_OWNER_KEY)||'guest';
+const selectedSave=()=>readMapSave(localStorage,saveOwner(),activeMap.id);
+const removeSelectedSave=()=>deleteMapSave(localStorage,saveOwner(),activeMap.id);
 let cloudAccount=null,cloudAvailable=false,cloudMessage='Connecting to Google save…';
-const SAVE_SCHEMA=2, PREFS_KEY='bastion_orchid_prefs';
-const loadBest=()=>{try{const owner=localStorage.getItem(SAVE_OWNER_KEY)||'guest';return +(localStorage.getItem(BEST_KEY+':'+owner)??(owner==='guest'?localStorage.getItem(BEST_KEY):null))||0;}catch(e){return 0;}};
-const saveBest=v=>{try{localStorage.setItem(BEST_KEY+':'+(localStorage.getItem(SAVE_OWNER_KEY)||'guest'),String(v));}catch(e){}};
+const SAVE_SCHEMA=3, PREFS_KEY='bastion_orchid_prefs';
+const loadBest=(mapId=activeMap.id)=>{try{const owner=saveOwner();return +(localStorage.getItem(BEST_KEY+':'+owner+':'+mapId)??(mapId==='orchid'?(localStorage.getItem(BEST_KEY+':'+owner)??(owner==='guest'?localStorage.getItem(BEST_KEY):null)):null))||0;}catch(e){return 0;}};
+const saveBest=(v,mapId=activeMap.id)=>{try{localStorage.setItem(BEST_KEY+':'+saveOwner()+':'+mapId,String(v));}catch(e){}};
 let bestWave=loadBest();
 
 /* ▲ GLM: debug + dev-test activation (never visible in normal play) */
@@ -581,7 +587,7 @@ const BOSSF=[
   {ll:-.2,lr:.38,kl:-1.2,kr:-.25,lean:.1,bob:0,sw:.02},
   {ll:.3,lr:.1,kl:-.7,kr:-.05,lean:.06,bob:-2,sw:-.03},
 ];
-const BOSST={ll:-.15,lr:.15,kl:.25,kr:-.25,lean:0,bob:0,sw:0};
+const BOSST={ll:-.157,lr:.157,kl:.245,kr:-.245,lean:0,bob:0,sw:0};
 function mech(g,x,y,s,o){
   g.save();g.translate(x,y);g.scale(s,s);
   const suit=o.suit,trim=o.trim||'#cfd8e6',vis=o.visor||SPAL.turq;
@@ -1352,7 +1358,7 @@ function applyTheme(ix){
   themeIx=(ix+TKEYS.length)%TKEYS.length;
   PREFS.themeIx=themeIx; savePrefs(false);
   const th=THEMES[TKEYS[themeIx]];
-  TPAL=th.cv;
+  TPAL=activeMap.id==='ember'?{...th.cv,dash:'#ffc085',breach:'#ff936a',acc:'#f0ab76',plate:'#303648',plateLine:'#bb8c78'}:th.cv;
   for(const k in th.ui)document.documentElement.style.setProperty(k,th.ui[k]);
   $('themeBtn').title='Theme: '+th.label+' (T)';
   buildStatic();
@@ -1651,10 +1657,12 @@ const overlay=$('overlay');
 /* ▲ GLM PHASE 3 — save probing with corruption classification. */
 function sanitizeLoaded(d){
   if(!d||typeof d!=='object'||Array.isArray(d))return null;
-  const v=(d.v===2||d.v===1)?1:0; // v1 & v2 share field shapes; v2 adds `at`
+  const v=[1,2,3].includes(d.v);
   if(!v)return null;
+  if(d.mapId!==undefined&&!isMapId(d.mapId))return null;
+  const mapId=getMap(d.mapId).id;
   const num=(x,lo,hi,def)=>Number.isFinite(x)?Math.round(Math.min(hi,Math.max(lo,x))):def;
-  const o={v:2,at:Number.isFinite(d.at)?d.at:0,
+  const o={v:3,mapId,at:Number.isFinite(d.at)?d.at:0,
     lives:num(d.lives,0,999,START_LIVES),
     gold:num(d.gold,0,1e9,START_GOLD),
     waveNum:num(d.waveNum,0,1e6,0),
@@ -1670,6 +1678,7 @@ function sanitizeLoaded(d){
       if(!td||typeof td!=='object'||!TOWERS[td.key])continue;
       const c=td.c|0,r=td.r|0;
       if(c<0||c>=COLS||r<0||r>=ROWS)continue;
+      if(!isBuildableOnMap(mapId,c,r)||o.towers.some(t=>t.c===c&&t.r===r))continue;
       if(!Number.isFinite(td.invested)||td.invested<0)continue;
       o.towers.push({key:td.key,c,r,
         dmgLv:Math.min(3,Math.max(0,td.dmgLv|0)),
@@ -1694,30 +1703,30 @@ function parsedSave(raw){
 }
 function switchSaveOwner(nextOwner,remoteSave){
   try{
-    const previous=localStorage.getItem(SAVE_OWNER_KEY)||'guest';
-    if(previous!==nextOwner){
-      const current=localStorage.getItem(SAVE_KEY);
-      if(current)localStorage.setItem(SAVE_KEY+':'+previous,current);
-      const saved=localStorage.getItem(SAVE_KEY+':'+nextOwner);
-      if(saved)localStorage.setItem(SAVE_KEY,saved);
-      else localStorage.removeItem(SAVE_KEY);
-      localStorage.setItem(SAVE_OWNER_KEY,nextOwner);
-      bestWave=loadBest();
+    switchStorageOwner(localStorage,nextOwner);
+    if(nextOwner!=='guest')for(const map of MAPS){
+      const legacy=sanitizeLoaded(remoteSave);
+      const remote=sanitizeLoaded(cloudAccount?.mapSaves?.[map.id]??(legacy?.mapId===map.id?legacy:null));
+      const local=parsedSave(readMapSave(localStorage,nextOwner,map.id));
+      const record=cloudAccount?.mapRecords?.[map.id]??(map.id==='orchid'?(Object.keys(cloudAccount?.mapRecords||{}).length===0?cloudAccount?.bestWave:legacy?.bestWave):0);
+      saveBest(Math.max(loadBest(map.id),remote?.bestWave||0,local?.bestWave||0,record||0),map.id);
+      if(remote&&remote.mapId===map.id&&(!local||remote.at>local.at))writeMapSave(localStorage,nextOwner,map.id,JSON.stringify(remote));
+      else if(local&&(!remote||local.at>remote.at))queueCloudSave(local);
     }
-    if(nextOwner==='guest')return;
-    const remote=sanitizeLoaded(remoteSave);
-    const local=parsedSave(localStorage.getItem(SAVE_KEY));
-    bestWave=Math.max(bestWave,remote?.bestWave||0,local?.bestWave||0,cloudAccount?.bestWave||0);
-    saveBest(bestWave);
-    if(remote&&(!local||remote.at>local.at)){
-      localStorage.setItem(SAVE_KEY,JSON.stringify(remote));
-      localStorage.setItem(SAVE_KEY+':'+nextOwner,JSON.stringify(remote));
-    }else if(local&&(!remote||local.at>remote.at))queueCloudSave(local);
+    bestWave=loadBest();
   }catch(e){console.warn('Save account switch failed; local progress was not deleted.',e);}
+}
+function chooseMap(id){
+  activateMap(id);localStorage.setItem(MAP_KEY,activeMap.id);bestWave=loadBest();
+  resetState();state='menu';applyTheme(themeIx);zoomScale=1;updateMapZoom(false);document.body.dataset.map=activeMap.id;
+  document.querySelector('.brand .sub').textContent=activeMap.name+' · '+activeMap.sector;
+  footer.querySelector('span').innerHTML='<b>'+activeMap.name+'</b> / '+activeMap.sector+' · TACTICAL DEFENSE';
+  cv.setAttribute('aria-label',activeMap.name+' battlefield. Choose a turret, then tap a free cell off the road and lava.');
+  showOverlay('start');
 }
 function probeSave(){
   try{
-    const raw=localStorage.getItem(SAVE_KEY);
+    const raw=selectedSave();
     if(!raw)return null;
     try{
       const d=JSON.parse(raw);
@@ -1733,12 +1742,14 @@ function showOverlay(kind){
     const ps=probeSave();
     const hasSave=!!(ps&&ps.ok);
     const corrupt=!!(ps&&!ps.ok);
-    const guestSave=cloudAccount&&!hasSave&&parsedSave(localStorage.getItem(SAVE_KEY+':guest'));
+    const guestSave=cloudAccount&&!hasSave&&parsedSave(readMapSave(localStorage,'guest',activeMap.id));
     const needsUsername=!!cloudAccount&&!cloudAccount.username;
     overlay.innerHTML=`<div class="panel" role="dialog" aria-modal="true" aria-label="Bastion start">
       <div class="ov-mark">${IC.keep}</div>
       <h1>BASTION</h1>
-      <p class="ov-tag">Directive 11 — thirty waves, endless beyond. Best march: <b class="gold">${bestWave}</b>.</p>
+      <p class="ov-tag">${activeMap.sector} — thirty waves, endless beyond. Map record: <b class="gold">${bestWave}</b>.</p>
+      <div class="map-select" role="group" aria-label="Choose battlefield">${MAPS.map(map=>`<button class="map-card ${map.id===activeMap.id?'selected':''}" data-map="${map.id}" aria-pressed="${map.id===activeMap.id}">${mapPreview(map)}<span><b>${map.name}</b><small>${map.subtitle}</small></span></button>`).join('')}</div>
+      <p class="map-brief">${activeMap.briefing}</p>
       ${corrupt?'<p class="ov-tag" style="color:#ffb4bf">⚠ Your saved march was corrupted and has been quarantined — starting fresh keeps everything else intact.</p>':''}
       <div class="menu-save">${hasSave?`<strong>CONTINUE — WAVE ${ps.data.waveNum+1}</strong><span>${ps.data.towers.length} towers · ${ps.data.lives} lives</span>`:'<strong>NEW JOURNEY</strong><span>Your progress saves automatically.</span>'}</div>
       ${cloudAccount?`<div class="menu-identity"><strong>${needsUsername?'CHOOSE YOUR PLAYER ID':'PLAYER RECORD'}</strong><span id="recordIdentity"></span><form id="usernameForm"><input id="usernameInput" aria-label="Player ID" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Player ID"><button type="submit">${needsUsername?'SAVE ID':'CHANGE ID'}</button></form><small>${USERNAME_HINT}</small></div>`:''}
@@ -1755,8 +1766,9 @@ function showOverlay(kind){
     $('accountLabel').textContent=cloudAccount?(cloudAccount.username?'@'+cloudAccount.username:(cloudAccount.name||cloudAccount.email)):'GUEST PLAYER';
     $('cloudMessage').textContent=cloudMessage||(needsUsername?'Choose your player ID to continue.':cloudAccount?'Progress syncs with your Google account.':'Sign in to keep progress across devices.');
     $('menuSettings').onclick=showSettings;
+    overlay.querySelectorAll('[data-map]').forEach(button=>button.onclick=()=>{if(button.dataset.map!==activeMap.id)chooseMap(button.dataset.map);});
     if(cloudAccount){
-      $('recordIdentity').textContent=needsUsername?'Pick a unique name for your saved record.':`@${cloudAccount.username} · BEST WAVE ${Math.max(bestWave,cloudAccount.bestWave)}`;
+      $('recordIdentity').textContent=needsUsername?'Pick a unique name for your saved record.':`@${cloudAccount.username} · ${activeMap.name} · BEST WAVE ${bestWave}`;
       $('usernameInput').value=cloudAccount.username;
       $('usernameForm').onsubmit=async e=>{
       e.preventDefault();
@@ -1783,11 +1795,10 @@ function showOverlay(kind){
       };
     }
     if(guestSave)$('importGuestBtn').onclick=()=>{
-      const raw=localStorage.getItem(SAVE_KEY+':guest');
+      const raw=readMapSave(localStorage,'guest',activeMap.id);
       const save=parsedSave(raw);
       if(!save)return;
-      localStorage.setItem(SAVE_KEY,JSON.stringify(save));
-      localStorage.setItem(SAVE_KEY+':'+cloudAccount.uid,JSON.stringify(save));
+      writeMapSave(localStorage,cloudAccount.uid,activeMap.id,JSON.stringify(save));
       queueCloudSave(save);showOverlay('start');
     };
     $('startBtn').onclick=()=>{
@@ -1802,26 +1813,27 @@ function showOverlay(kind){
       }
       startNewGame();
     };
-    function startNewGame(){initAudio();try{localStorage.removeItem(SAVE_KEY);}catch(e){}
+    function startNewGame(){initAudio();try{removeSelectedSave();}catch(e){}
       resetState(); state='play'; overlay.style.display='none';
       saveGame(true);showBanner('WAVE 1 AWAITS','BUILD YOUR DEFENSE, COMMANDER');}
     if(hasSave)$('resumeBtn').onclick=()=>{ initAudio();
       if(loadGame()){ state='play'; overlay.style.display='none';
         showBanner('MARCH RESUMED','WAVE '+(waveNum+1)+' AWAITS'); }
-      else{ try{localStorage.removeItem(SAVE_KEY);}catch(e){}
+      else{ try{removeSelectedSave();}catch(e){}
         resetState(); state='play'; overlay.style.display='none'; } };
   }else if(kind==='win'){
     overlay.innerHTML=`<div class="panel" role="dialog" aria-modal="true" aria-label="Victory">
       <div class="ov-mark">${IC.keep}</div>
       <h1>THE ROAD HOLDS</h1>
-      <p class="ov-tag">Thirty waves, broken on your walls. The orchid field is yours.</p>
+      <p class="ov-tag">Thirty waves, broken on your walls. ${activeMap.name} is secure.</p>
       <div class="ov-stats">
         <div><label>WAVES CLEARED</label><b>${cleared}</b></div>
         <div><label>HOSTILES DOWN</label><b>${kills}</b></div>
         <div><label>GOLD EARNED</label><b class="gold">${goldEarned}</b></div>
       </div>
       <button class="ov-btn" id="endlessBtn">ENDLESS MARCH →</button>
-      <button class="ov-btn2" id="againBtn">PLAY AGAIN</button></div>`;
+      <button class="ov-btn2" id="againBtn">PLAY AGAIN</button><button class="ov-btn2" id="changeMapBtn">CHOOSE BATTLEFIELD</button></div>`;
+    $('changeMapBtn').onclick=()=>chooseMap(activeMap.id);
     $('againBtn').onclick=()=>{ initAudio(); resetState(); state='play'; overlay.style.display='none';
       showBanner('RE-DEPLOYED','THE ROAD IS YOURS AGAIN'); };
     $('endlessBtn').onclick=()=>{ initAudio(); endless=true; state='play';
@@ -1832,13 +1844,14 @@ function showOverlay(kind){
     overlay.innerHTML=`<div class="panel bad" role="dialog" aria-modal="true" aria-label="Defeat">
       <div class="ov-mark">${IC.keep}</div>
       <h1>THE KEEP HAS FALLEN</h1>
-      <p class="ov-tag">The orchid road ends here, commander.</p>
+      <p class="ov-tag">The keep at ${activeMap.name} has fallen, commander.</p>
       <div class="ov-stats">
         <div><label>WAVES CLEARED</label><b>${cleared}</b></div>
         <div><label>HOSTILES DOWN</label><b>${kills}</b></div>
         <div><label>GOLD EARNED</label><b class="gold">${goldEarned}</b></div>
       </div>
-      <button class="ov-btn" id="againBtn">RE-DEPLOY</button></div>`;
+      <button class="ov-btn" id="againBtn">RE-DEPLOY</button><button class="ov-btn2" id="changeMapBtn">CHOOSE BATTLEFIELD</button></div>`;
+    $('changeMapBtn').onclick=()=>chooseMap(activeMap.id);
     $('againBtn').onclick=()=>{ initAudio(); resetState(); state='play'; overlay.style.display='none';
       showBanner('RE-DEPLOYED','THE ROAD IS YOURS AGAIN'); };
   }
@@ -1855,24 +1868,23 @@ function saveGame(force){
   lastSave=n;
   try{
     const snapshot={
-      v:2,at:Date.now(),
+      v:3,mapId:activeMap.id,at:Date.now(),
       lives,gold:Math.round(gold),waveNum,cleared,endless,kills,goldEarned,bestWave,
       MOD:{...MOD},
       towers:towers.map(t=>({key:t.key,c:t.c,r:t.r,dmgLv:t.dmgLv,rateLv:t.rateLv,
         invested:t.invested,mode:t.mode,kills:t.kills||0})),
     };
-    localStorage.setItem(SAVE_KEY,JSON.stringify(snapshot));
+    writeMapSave(localStorage,saveOwner(),activeMap.id,JSON.stringify(snapshot));
     if(cloudAccount&&localStorage.getItem(SAVE_OWNER_KEY)===cloudAccount.uid){
-      localStorage.setItem(SAVE_KEY+':'+cloudAccount.uid,JSON.stringify(snapshot));
       queueCloudSave(snapshot);
     }
   }catch(e){}
 }
 function loadGame(){
   try{
-    const d=JSON.parse(localStorage.getItem(SAVE_KEY));
+    const d=JSON.parse(selectedSave());
     const s=sanitizeLoaded(d);
-    if(!s)return false;
+    if(!s||s.mapId!==activeMap.id)return false;
     if(DEBUG)console.info('[BASTION] loaded schema v'+(d&&d.v)+' → migrated to v2');
     resetState();
     lives=s.lives;gold=s.gold;waveNum=s.waveNum;cleared=s.cleared;
@@ -1914,7 +1926,7 @@ function setPlacing(k){
   const cp=$('cancelPlace');
   if(cp)cp.hidden=!(placing&&(lastTouch||matchMedia('(pointer:coarse)').matches));
 }
-function canPlace(c,r){return c>=0&&c<COLS&&r>=0&&r<ROWS&&!pathSet.has(c+','+r)&&!towerAt.has(c+','+r);}
+function canPlace(c,r){return isBuildableOnMap(activeMap.id,c,r)&&!towerAt.has(c+','+r);}
 function startWave(){
   if(waveActive||state!=='play')return;
   if(idleOn&&idleTimer>0.5){
@@ -1997,7 +2009,7 @@ function leak(c){
   if(lives<=0){
     lives=0;state='over';
     bestWave=Math.max(bestWave,cleared);saveBest(bestWave);
-    try{localStorage.removeItem(SAVE_KEY);}catch(e){}
+    try{removeSelectedSave();}catch(e){}
     sfx('lose');showOverlay('over');
   }
 }
@@ -2845,7 +2857,7 @@ function boardPress(e){
       saveGame(true);
     }else{
       sfx('deny');
-      floaters.push({x:p.x,y:p.y,txt:gold<cost?'NO GOLD':'BLOCKED',life:.8,color:TPAL.breach});
+      floaters.push({x:p.x,y:p.y,txt:blockedSet.has(c+','+r)?'LAVA — NO BUILD':gold<cost?'NO GOLD':'BLOCKED',life:.8,color:TPAL.breach});
     }
   }else{
     sel=towerAt.get(c+','+r)||null;renderInspector();
@@ -3090,6 +3102,7 @@ function artOrchid(g,x,y,s,seed){
 buildStatic=function(){
   oldStatic(); // Retain the original initialization/RNG sequence exactly.
   const g=bgCv.getContext('2d');g.save();g.setTransform(DPR,0,0,DPR,0,0);
+  if(activeMap.id==='ember'){drawEmberField(g);g.restore();return;}
   const terrain=['#243839','#3c303c','#26394a'][themeIx];
   g.fillStyle=terrain;g.fillRect(0,0,W,H);
   const wash=g.createLinearGradient(0,0,W,H);wash.addColorStop(0,'#739b921d');wash.addColorStop(.55,'#0b192733');wash.addColorStop(1,'#07142488');g.fillStyle=wash;g.fillRect(0,0,W,H);
@@ -3236,6 +3249,7 @@ drawSky=function(){
   const now=performance.now();visualDelta=Math.min(.05,(now-visualStamp)/1000);visualStamp=now;
   if(ART.motion&&(!paused||state!=='play'))artClock+=visualDelta;
   const ambN=Math.max(6,Math.round(ART.ambient*Q().amb));
+  if(activeMap.id==='ember'){drawEmberAtmosphere(ctx,artClock,ART.motion,ambN);return;}
   ctx.save();for(let i=0;i<ambN;i++){const x=dr(i+412)*W+(ART.motion?Math.sin(artClock*.2+i)*9:0),y=dr(i+918)*H+(ART.motion?Math.cos(artClock*.25+i)*7:0);ctx.globalAlpha=.18+.22*(.5+.5*Math.sin(artClock*.7+i));artCircle(ctx,x,y,1.1,'#dce4b1');}ctx.restore();
   // Raised botanical keep at the original endpoint, with no collision geometry.
   const x=GATE.x,y=GATE.y;ctx.save();ctx.fillStyle='#030d1966';ctx.beginPath();ctx.ellipse(x+3,y+10,36,20,0,0,TAU);ctx.fill();
@@ -3267,7 +3281,7 @@ const COVER=`<svg viewBox="0 0 460 550" xmlns="http://www.w3.org/2000/svg" aria-
 <g fill="#e4c591"><circle cx="66" cy="307" r="2"/><circle cx="150" cy="285" r="2"/><circle cx="376" cy="284" r="2"/><circle cx="52" cy="251" r="1"/><circle cx="114" cy="175" r="1.5"/><circle cx="395" cy="208" r="1"/><circle cx="189" cy="124" r="1.2"/></g>
 <path d="M0 433L63 394 126 441 202 417 287 466 400 405 460 436V550H0Z" fill="#101d2b"/><path d="M0 472L74 432 144 477 199 450 315 499 398 440 460 472V550H0Z" fill="#0a1421"/>
 </svg>`;
-showOverlay=function(kind){oldOverlay(kind);if(kind==='start'){const panel=overlay.querySelector('.panel');if(!panel)return;panel.classList.add('deployment');const brief=document.createElement('div');brief.className='briefing';while(panel.firstChild)brief.appendChild(panel.firstChild);const eyebrow=document.createElement('span');eyebrow.className='eyebrow';eyebrow.textContent='THE ORCHID PROTOCOL / 11';brief.prepend(eyebrow);const art=document.createElement('div');art.className='cover-art';art.innerHTML=COVER+'<div class="cover-caption"><b>THE LAST LIGHT IN THE GARDEN</b>Thirty waves. One road. Your bastion.</div>';panel.append(art,brief);const fb=brief.querySelector('.ov-btn');if(fb){try{fb.focus({preventScroll:true});}catch(e){}}}};
+showOverlay=function(kind){oldOverlay(kind);if(kind==='start'){const panel=overlay.querySelector('.panel');if(!panel)return;panel.classList.add('deployment');panel.dataset.map=activeMap.id;const brief=document.createElement('div');brief.className='briefing';while(panel.firstChild)brief.appendChild(panel.firstChild);const eyebrow=document.createElement('span');eyebrow.className='eyebrow';eyebrow.textContent=activeMap.name+' / '+activeMap.sector;brief.prepend(eyebrow);const art=document.createElement('div');art.className='cover-art';art.innerHTML=(activeMap.id==='ember'?EMBER_COVER:COVER)+'<div class="cover-caption"><b>'+activeMap.caption+'</b>Thirty waves. One road. Your bastion.</div>';panel.append(art,brief);const fb=brief.querySelector('.ov-btn');if(fb&&!fb.disabled){try{fb.focus({preventScroll:true});}catch(e){}}}};
 
 // Consistent miniature portraits are baked from the actual tower painters.
 function decorateShop(){for(const k of TORDER){const c=document.createElement('canvas');c.width=112;c.height=112;const g=c.getContext('2d');g.scale(2,2);g.translate(28,31);g.drawImage(BASES[k],-28,-30,56,56);g.scale(.78,.78);const t={x:0,y:0,key:k,dmgLv:0,rateLv:0,spin:0,cool:0,abCd:0};
@@ -3286,7 +3300,11 @@ hudFrame=function(){oldHUD();const status=paused?'TACTICAL PAUSE':waveActive?'HO
 // Native controls retain their original handlers, labels become screen-reader usable.
 for(const [id,label] of [['themeBtn','Change color theme'],['settingsBtn','Open settings'],['pauseBtn','Pause or resume'],['speedBtn','Cycle game speed'],['soundBtn','Mute or unmute']])$(id).setAttribute('aria-label',label);
 cv.setAttribute('aria-label','Orchid Reserve battlefield. Choose a turret, then tap an unoccupied cell off the road.');
-document.title='BASTION — Orchid Remastered';
+document.title='BASTION — The Garden & The Rift';
+document.body.dataset.map=activeMap.id;
+document.querySelector('.brand .sub').textContent=activeMap.name+' · '+activeMap.sector;
+footer.querySelector('span').innerHTML='<b>'+activeMap.name+'</b> / '+activeMap.sector+' · TACTICAL DEFENSE';
+cv.setAttribute('aria-label',activeMap.name+' battlefield. Choose a turret, then tap a free cell off the road and lava.');
 
 /* ============================================================
    ▲ GLM PHASE 1 — EMBEDDED DEVELOPMENT REGRESSION HARNESS
@@ -3339,7 +3357,7 @@ const BASTION_TESTS={
       T.ap(p.x,WAY[WAY.length-1].x,1.5,'x');T.ap(p.y,WAY[WAY.length-1].y,1.5,'y');});
     T.t('path: posAt rejects NaN safely',()=>{const p=posAt(NaN);T.ok(isFinite(p.x)&&isFinite(p.y));});
     // -- placement --
-    T.t('placement: path cell rejected',()=>T.eq(canPlace(8,2),false));
+    T.t('placement: path cell rejected',()=>T.eq(canPlace(...WPC[1]),false));
     T.t('placement: free cell accepted',()=>T.eq(canPlace(0,0),true));
     T.t('placement: out-of-bounds rejected',()=>{T.eq(canPlace(-1,0),false);T.eq(canPlace(COLS,0),false);});
     // -- costs --
@@ -3406,16 +3424,20 @@ const BASTION_TESTS={
       T.eq(sanitizeLoaded(null),null);
       T.eq(sanitizeLoaded('junk'),null);
       T.eq(sanitizeLoaded({v:9}),null);});
-    T.t('save: v1 migrates to v2 with clamps',()=>{
+    T.t('save: v1 migrates to Orchid v3 with clamps',()=>{
       const s=sanitizeLoaded({v:1,lives:5000,gold:-10,waveNum:12,cleared:12,
         towers:[{key:'bolt',c:0,r:0,dmgLv:9,rateLv:2,invested:150,mode:'weird',kills:3}],
         MOD:{rangeMul:1.2}});
-      T.eq(s.v,2);T.eq(s.lives,999);T.eq(s.gold,0);
+      T.eq(s.v,3);T.eq(s.mapId,'orchid');T.eq(s.lives,999);T.eq(s.gold,0);
       T.eq(s.towers[0].dmgLv,3);T.eq(s.towers[0].mode,'first');
       T.ap(s.MOD.rangeMul,1.2,.0001);});
-    T.t('save: tower cap enforced',()=>{
+    T.t('save: duplicate tower cells discarded',()=>{
       const ts=[];for(let i=0;i<450;i++)ts.push({key:'bolt',c:0,r:0,dmgLv:0,rateLv:0,invested:50,mode:'first'});
-      T.eq(sanitizeLoaded({v:2,towers:ts}).towers.length,400);});
+      T.eq(sanitizeLoaded({v:2,towers:ts}).towers.length,1);});
+    T.t('save: unknown maps rejected',()=>T.eq(sanitizeLoaded({v:3,mapId:'missing'}),null));
+    T.t('save: Ember lava cannot restore a tower',()=>{
+      const s=sanitizeLoaded({v:3,mapId:'ember',towers:[{key:'bolt',c:18,r:6,invested:50}]});
+      T.eq(s.mapId,'ember');T.eq(s.towers.length,0);});
     // -- cb mode --
     T.t('a11y: cb palette swaps',()=>{const keep=PREFS.cb;PREFS.cb=true;
       const c=hpCols(.1);T.eq(c[0],'#e07a3c');PREFS.cb=keep;});
@@ -3451,5 +3473,5 @@ if(/devtest=1/.test(location.search)){
   setTimeout(()=>{const ok=BASTION_TESTS.runAll();BASTION_TESTS.report();
     showBanner(ok?'DEV TESTS: ALL PASS':'DEV TESTS: FAILURES',BASTION_TESTS.pass+' passed · '+BASTION_TESTS.fail+' failed — see console',ok?'':'bad');},600);
 }
-window.BASTION={version:'glm53-upgrade-2',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
+window.BASTION={version:'ember-rift-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
 

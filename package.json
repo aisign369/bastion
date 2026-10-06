@@ -5,6 +5,7 @@
   "packageManager": "pnpm@10.29.3",
   "type": "module",
   "scripts": {
+    "test:maps": "node --experimental-strip-types --test tests/maps.test.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1"
