@@ -13,6 +13,7 @@ import { CELL, COLS, ROWS, W, H, WPC, WAY, BREACH, GATE, SEGS, PATHLEN, posAt, p
 import { MAPS, getMap, isMapId, isBuildableOnMap, mapPreview } from './maps';
 import { SAVE_OWNER_KEY, readMapSave, writeMapSave, deleteMapSave, switchStorageOwner } from './map-storage';
 import { drawEmberField, drawEmberAtmosphere, EMBER_COVER } from './ember-art';
+import { drawFrontierField, drawFrontierAtmosphere, FROST_COVER, SUNSPIRE_COVER } from './frontier-art';
 import { startPhaserScene } from './phaser-scene';
 import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, USERNAME_HINT } from './cloud';
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
@@ -1358,7 +1359,8 @@ function applyTheme(ix){
   themeIx=(ix+TKEYS.length)%TKEYS.length;
   PREFS.themeIx=themeIx; savePrefs(false);
   const th=THEMES[TKEYS[themeIx]];
-  TPAL=activeMap.id==='ember'?{...th.cv,dash:'#ffc085',breach:'#ff936a',acc:'#f0ab76',plate:'#303648',plateLine:'#bb8c78'}:th.cv;
+  const mapPalettes={ember:{dash:'#ffc085',breach:'#ff936a',acc:'#f0ab76',plate:'#303648',plateLine:'#bb8c78'},frost:{dash:'#d1f2ff',breach:'#80daff',acc:'#b2e9ff',plate:'#294356',plateLine:'#8fb9cd'},sunspire:{dash:'#ffe1a3',breach:'#ffc47a',acc:'#efd199',plate:'#514138',plateLine:'#bc9970'}};
+  TPAL={...th.cv,...mapPalettes[activeMap.id]};
   for(const k in th.ui)document.documentElement.style.setProperty(k,th.ui[k]);
   $('themeBtn').title='Theme: '+th.label+' (T)';
   buildStatic();
@@ -1721,7 +1723,7 @@ function chooseMap(id){
   resetState();state='menu';applyTheme(themeIx);zoomScale=1;updateMapZoom(false);document.body.dataset.map=activeMap.id;
   document.querySelector('.brand .sub').textContent=activeMap.name+' · '+activeMap.sector;
   footer.querySelector('span').innerHTML='<b>'+activeMap.name+'</b> / '+activeMap.sector+' · TACTICAL DEFENSE';
-  cv.setAttribute('aria-label',activeMap.name+' battlefield. Choose a turret, then tap a free cell off the road and lava.');
+  cv.setAttribute('aria-label',activeMap.name+' battlefield. Choose a turret, then tap a free cell away from the road and marked terrain.');
   showOverlay('start');
 }
 function probeSave(){
@@ -2857,7 +2859,7 @@ function boardPress(e){
       saveGame(true);
     }else{
       sfx('deny');
-      floaters.push({x:p.x,y:p.y,txt:blockedSet.has(c+','+r)?'LAVA — NO BUILD':gold<cost?'NO GOLD':'BLOCKED',life:.8,color:TPAL.breach});
+      floaters.push({x:p.x,y:p.y,txt:blockedSet.has(c+','+r)?activeMap.hazardLabel+' — NO BUILD':gold<cost?'NO GOLD':'BLOCKED',life:.8,color:TPAL.breach});
     }
   }else{
     sel=towerAt.get(c+','+r)||null;renderInspector();
@@ -3103,6 +3105,7 @@ buildStatic=function(){
   oldStatic(); // Retain the original initialization/RNG sequence exactly.
   const g=bgCv.getContext('2d');g.save();g.setTransform(DPR,0,0,DPR,0,0);
   if(activeMap.id==='ember'){drawEmberField(g);g.restore();return;}
+  if(activeMap.id==='frost'||activeMap.id==='sunspire'){drawFrontierField(g);g.restore();return;}
   const terrain=['#243839','#3c303c','#26394a'][themeIx];
   g.fillStyle=terrain;g.fillRect(0,0,W,H);
   const wash=g.createLinearGradient(0,0,W,H);wash.addColorStop(0,'#739b921d');wash.addColorStop(.55,'#0b192733');wash.addColorStop(1,'#07142488');g.fillStyle=wash;g.fillRect(0,0,W,H);
@@ -3250,6 +3253,7 @@ drawSky=function(){
   if(ART.motion&&(!paused||state!=='play'))artClock+=visualDelta;
   const ambN=Math.max(6,Math.round(ART.ambient*Q().amb));
   if(activeMap.id==='ember'){drawEmberAtmosphere(ctx,artClock,ART.motion,ambN);return;}
+  if(activeMap.id==='frost'||activeMap.id==='sunspire'){drawFrontierAtmosphere(ctx,artClock,ART.motion,ambN);return;}
   ctx.save();for(let i=0;i<ambN;i++){const x=dr(i+412)*W+(ART.motion?Math.sin(artClock*.2+i)*9:0),y=dr(i+918)*H+(ART.motion?Math.cos(artClock*.25+i)*7:0);ctx.globalAlpha=.18+.22*(.5+.5*Math.sin(artClock*.7+i));artCircle(ctx,x,y,1.1,'#dce4b1');}ctx.restore();
   // Raised botanical keep at the original endpoint, with no collision geometry.
   const x=GATE.x,y=GATE.y;ctx.save();ctx.fillStyle='#030d1966';ctx.beginPath();ctx.ellipse(x+3,y+10,36,20,0,0,TAU);ctx.fill();
@@ -3281,7 +3285,7 @@ const COVER=`<svg viewBox="0 0 460 550" xmlns="http://www.w3.org/2000/svg" aria-
 <g fill="#e4c591"><circle cx="66" cy="307" r="2"/><circle cx="150" cy="285" r="2"/><circle cx="376" cy="284" r="2"/><circle cx="52" cy="251" r="1"/><circle cx="114" cy="175" r="1.5"/><circle cx="395" cy="208" r="1"/><circle cx="189" cy="124" r="1.2"/></g>
 <path d="M0 433L63 394 126 441 202 417 287 466 400 405 460 436V550H0Z" fill="#101d2b"/><path d="M0 472L74 432 144 477 199 450 315 499 398 440 460 472V550H0Z" fill="#0a1421"/>
 </svg>`;
-showOverlay=function(kind){oldOverlay(kind);if(kind==='start'){const panel=overlay.querySelector('.panel');if(!panel)return;panel.classList.add('deployment');panel.dataset.map=activeMap.id;const brief=document.createElement('div');brief.className='briefing';while(panel.firstChild)brief.appendChild(panel.firstChild);const eyebrow=document.createElement('span');eyebrow.className='eyebrow';eyebrow.textContent=activeMap.name+' / '+activeMap.sector;brief.prepend(eyebrow);const art=document.createElement('div');art.className='cover-art';art.innerHTML=(activeMap.id==='ember'?EMBER_COVER:COVER)+'<div class="cover-caption"><b>'+activeMap.caption+'</b>Thirty waves. One road. Your bastion.</div>';panel.append(art,brief);const fb=brief.querySelector('.ov-btn');if(fb&&!fb.disabled){try{fb.focus({preventScroll:true});}catch(e){}}}};
+showOverlay=function(kind){oldOverlay(kind);if(kind==='start'){const panel=overlay.querySelector('.panel');if(!panel)return;panel.classList.add('deployment');panel.dataset.map=activeMap.id;const brief=document.createElement('div');brief.className='briefing';while(panel.firstChild)brief.appendChild(panel.firstChild);const eyebrow=document.createElement('span');eyebrow.className='eyebrow';eyebrow.textContent=activeMap.name+' / '+activeMap.sector;brief.prepend(eyebrow);const art=document.createElement('div');art.className='cover-art';art.innerHTML=({orchid:COVER,ember:EMBER_COVER,frost:FROST_COVER,sunspire:SUNSPIRE_COVER}[activeMap.id])+'<div class="cover-caption"><b>'+activeMap.caption+'</b>Thirty waves. One road. Your bastion.</div>';panel.append(art,brief);const fb=brief.querySelector('.ov-btn');if(fb&&!fb.disabled){try{fb.focus({preventScroll:true});}catch(e){}}}};
 
 // Consistent miniature portraits are baked from the actual tower painters.
 function decorateShop(){for(const k of TORDER){const c=document.createElement('canvas');c.width=112;c.height=112;const g=c.getContext('2d');g.scale(2,2);g.translate(28,31);g.drawImage(BASES[k],-28,-30,56,56);g.scale(.78,.78);const t={x:0,y:0,key:k,dmgLv:0,rateLv:0,spin:0,cool:0,abCd:0};
@@ -3300,11 +3304,11 @@ hudFrame=function(){oldHUD();const status=paused?'TACTICAL PAUSE':waveActive?'HO
 // Native controls retain their original handlers, labels become screen-reader usable.
 for(const [id,label] of [['themeBtn','Change color theme'],['settingsBtn','Open settings'],['pauseBtn','Pause or resume'],['speedBtn','Cycle game speed'],['soundBtn','Mute or unmute']])$(id).setAttribute('aria-label',label);
 cv.setAttribute('aria-label','Orchid Reserve battlefield. Choose a turret, then tap an unoccupied cell off the road.');
-document.title='BASTION — The Garden & The Rift';
+document.title='BASTION — Four Frontiers';
 document.body.dataset.map=activeMap.id;
 document.querySelector('.brand .sub').textContent=activeMap.name+' · '+activeMap.sector;
 footer.querySelector('span').innerHTML='<b>'+activeMap.name+'</b> / '+activeMap.sector+' · TACTICAL DEFENSE';
-cv.setAttribute('aria-label',activeMap.name+' battlefield. Choose a turret, then tap a free cell off the road and lava.');
+cv.setAttribute('aria-label',activeMap.name+' battlefield. Choose a turret, then tap a free cell away from the road and marked terrain.');
 
 /* ============================================================
    ▲ GLM PHASE 1 — EMBEDDED DEVELOPMENT REGRESSION HARNESS
@@ -3438,6 +3442,12 @@ const BASTION_TESTS={
     T.t('save: Ember lava cannot restore a tower',()=>{
       const s=sanitizeLoaded({v:3,mapId:'ember',towers:[{key:'bolt',c:18,r:6,invested:50}]});
       T.eq(s.mapId,'ember');T.eq(s.towers.length,0);});
+    T.t('save: new map hazards discard towers while preserving safe placements',()=>{
+      for(const map of MAPS.filter(map=>map.id==='frost'||map.id==='sunspire')){
+        const [c,r]=map.blocked[0];
+        const s=sanitizeLoaded({v:3,mapId:map.id,towers:[{key:'bolt',c,r,invested:50},{key:'bolt',c:0,r:0,invested:50}]});
+        T.eq(s.mapId,map.id);T.eq(s.towers.length,1);T.eq(s.towers[0].c,0);T.eq(s.towers[0].r,0);
+      }});
     // -- cb mode --
     T.t('a11y: cb palette swaps',()=>{const keep=PREFS.cb;PREFS.cb=true;
       const c=hpCols(.1);T.eq(c[0],'#e07a3c');PREFS.cb=keep;});
@@ -3473,5 +3483,5 @@ if(/devtest=1/.test(location.search)){
   setTimeout(()=>{const ok=BASTION_TESTS.runAll();BASTION_TESTS.report();
     showBanner(ok?'DEV TESTS: ALL PASS':'DEV TESTS: FAILURES',BASTION_TESTS.pass+' passed · '+BASTION_TESTS.fail+' failed — see console',ok?'':'bad');},600);
 }
-window.BASTION={version:'ember-rift-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
+window.BASTION={version:'four-frontiers-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
 

@@ -32,9 +32,16 @@ The Firebase Console's Authentication → Users and Firestore → Data pages sho
 
 ## Battlefields
 
-Choose **Orchid Reserve** or **Ember Rift** from the start menu. Ember Rift is a basalt caldera with a new route, three riveted bridges over a molten fault, warm lighting and drifting embers. Lava cells cannot hold towers. Both maps support the existing thirty waves, endless mode, upgrades, selling, pinch zoom and FIT.
+Choose from four battlefields in the start menu:
 
-Each map has its own journey and best-wave record for each guest/account. Schema v3 adds `mapId`; v1/v2 saves migrate to Orchid without copying towers into Ember. Local saves are separated by account and map. Firebase stores `mapSaves.orchid`, `mapSaves.ember` and matching `mapRecords`; the legacy `save` field remains an Orchid backup. Owner-only Firestore rules continue to cover these fields.
+- **Orchid Reserve** — the original winding garden road.
+- **Ember Rift** — a basalt caldera with three riveted bridges over a molten fault. Lava blocks construction.
+- **Frostwatch** — a snowy outpost, fractured glacial lake and eastern switchbacks. Thin lake ice blocks construction.
+- **Sunspire Ruins** — sandstone ruins around an oasis, with a southern hairpin for overlapping fire. Oasis water blocks construction.
+
+Each has its own route, cover illustration, terrain, keep and ambient effects. All four support the existing thirty waves, endless mode, upgrades, selling, pinch zoom and FIT. Terrain is rendered into the static board cache; the modest particle count follows the existing quality and reduced-motion preferences.
+
+Each map has its own journey and best-wave record for each guest/account. Schema v3 adds `mapId`; v1/v2 saves migrate to Orchid without copying towers into other maps. Local saves are separated by account and map. Firebase stores the `orchid`, `ember`, `frost` and `sunspire` slots under `mapSaves` and matching `mapRecords`; the legacy `save` field remains an Orchid backup. Owner-only Firestore rules continue to cover these fields.
 
 Run `npm run test:maps` with Node 22.6+ for route, bridge, save migration and account-isolation checks. `?devtest=1` runs the in-game checks on the selected battlefield.
 
