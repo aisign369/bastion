@@ -14,6 +14,7 @@ import { MAPS, getMap, isMapId, isBuildableOnMap, mapPreview } from './maps';
 import { SAVE_OWNER_KEY, readMapSave, writeMapSave, deleteMapSave, switchStorageOwner } from './map-storage';
 import { drawEmberField, drawEmberAtmosphere, EMBER_COVER } from './ember-art';
 import { drawFrontierField, drawFrontierAtmosphere, FROST_COVER, SUNSPIRE_COVER } from './frontier-art';
+import { createUnitMotion, advanceUnitMotion, gaitPose, bossGaitPose, hitReaction } from './unit-motion';
 import { startPhaserScene } from './phaser-scene';
 import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, USERNAME_HINT } from './cloud';
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
@@ -42,6 +43,7 @@ let bestWave=loadBest();
 
 /* ▲ GLM: debug + dev-test activation (never visible in normal play) */
 const DEBUG=(()=>{try{return /(?:debug|devtest)=1/.test(location.search);}catch(e){return false;}})();
+const MOTION_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('animationlab');
 
 /* ▲ GLM PHASE 2 — gameplay RNG (seedable) vs cosmetic RNG.
    Gameplay-affecting randomness (elite rolls, spawn lane, card shuffle)
@@ -700,13 +702,14 @@ function shadeS(g,x,y,s,alpha,cols){
   cg.addColorStop(0,lt(cols.cloak,1.3));cg.addColorStop(.6,cols.cloak);cg.addColorStop(1,lt(cols.cloak,.55));
   g.fillStyle=cg;
   g.beginPath();
-  g.moveTo(-15,-4);
-  g.bezierCurveTo(-17,-30,-10,-46,0,-46);
-  g.bezierCurveTo(10,-46,17,-30,15,-4);
-  g.quadraticCurveTo(10,-11,6,-3);
-  g.quadraticCurveTo(2,-11,0,-3);
-  g.quadraticCurveTo(-3,-11,-7,-3);
-  g.quadraticCurveTo(-11,-11,-15,-4);
+  const sway=cols.sway||0,lift=cols.lift||0;
+  g.moveTo(-15+sway,-4+lift);
+  g.bezierCurveTo(-17+sway*.5,-30,-10,-46,0,-46);
+  g.bezierCurveTo(10,-46,17+sway*.5,-30,15+sway,-4+lift);
+  g.quadraticCurveTo(10+sway,-11-lift,6+sway,-3+lift);
+  g.quadraticCurveTo(2+sway,-11,0+sway,-3-lift);
+  g.quadraticCurveTo(-3+sway,-11,-7+sway,-3+lift);
+  g.quadraticCurveTo(-11+sway,-11-lift,-15+sway,-4+lift);
   g.closePath();g.fill();
   g.strokeStyle=cols.trim;g.lineWidth=2;g.stroke();
   g.beginPath();g.ellipse(0,-36,9.5,8.5,0,0,TAU);
@@ -1864,6 +1867,7 @@ function showOverlay(kind){
 /* ---------- autosave (▲ GLM: schema v2 + throttled + forced milestones) ---------- */
 let lastSave=0;
 function saveGame(force){
+  if(MOTION_LAB)return;
   if(state!=='play'&&state!=='cards')return;
   const n=performance.now();
   if(!force&&n-lastSave<4000)return;
@@ -2329,33 +2333,29 @@ function update(dt){
 /* ---------- render ---------- */
 function drawCreep(c){
   const k=SCALE[c.type]*(c.elite?1.06:1);
-  const moving=c.spd>0&&!(c.chan);
+  const motion=visualUnits.get(c)?.motion;
+  const moving=ART.motion&&!!motion?.moving;
   const isEl=c.elite&&ELITE_OF[c.type];
   let fr;
-  if(c.type==='shade')fr=c.elite?SPR.shadeEl:SPR.shade;
+  if(c.type==='shade'){const run=c.elite?SPR.shadeElRun:SPR.shadeRun;fr=ART.motion&&run?run[Math.floor((motion?.phase||0)*run.length)%run.length]:(c.elite?SPR.shadeEl:SPR.shade);}
   else if(c.type==='boss'){
-    /* ▲ boss walk animation — 12-frame stomp cycle, faster when enraged.
+    /* Distance-driven 24-frame stomp cycle follows the boss's actual speed.
        Falls back to the static silhouette under reduced motion. */
     const run=(ART.motion&&SPR.bossRun&&SPR.bossRun.length)?SPR.bossRun:null;
-    fr=(moving&&run)?run[Math.floor(time*(c.enraged?19:13)+c.seed*2)%run.length]:SPR.boss;
+    fr=(moving&&run)?run[Math.floor(motion.phase*run.length)%run.length]:SPR.boss;
   }
   else{
     const key=isEl?'elite':c.type;
-    fr=moving?SPR.mech[key][Math.floor((ART.motion?time:0)*40+c.seed)%SPR.mech[key].length]:SPR.mech[key+'_s'];
-  }
-  if(moving&&state==='play'&&!paused&&Math.random()<.05&&parts.length<Q().parts){
-    parts.push({x:c.x+(Math.random()-.5)*8,y:c.y+13*k,vx:(Math.random()-.5)*14,
-      vy:-8-Math.random()*10,life:.4,max:.4,color:hexA(TPAL.speck,.3),
-      s:1.6+Math.random()*1.4,rot:Math.random()*3,vr:1,petal:false});
+    fr=moving?SPR.mech[key][Math.floor(motion.phase*SPR.mech[key].length)%SPR.mech[key].length]:SPR.mech[key+'_s'];
   }
   ctx.save();ctx.globalAlpha=.24;ctx.fillStyle='#000';
   ctx.beginPath();ctx.ellipse(c.x,c.y+16*k,17*k,5.5*k,0,0,TAU);ctx.fill();ctx.restore();
-  const flip=c.dx<0;
+  const flip=motion?motion.facing<0:c.dx<0;
   let hover=0;
-  if(c.type==='shade')hover=Math.sin(time*3+c.seed)*2.5;
+  if(c.type==='shade'&&ART.motion)hover=Math.sin(artClock*2.4+c.seed)*2.5;
   /* ▲ boss: vertical bob now lives inside the walk cycle itself —
      only apply the old float when static (reduced motion). */
-  else if(c.type==='boss')hover=(moving&&ART.motion&&SPR.bossRun&&SPR.bossRun.length)?0:Math.abs(Math.sin(time*4+c.seed))*1.6;
+  else if(c.type==='boss')hover=0;
   if(c.type==='shade'){
     for(let a2=2;a2>=1;a2--){
       ctx.save();ctx.globalAlpha=a2===2?.14:.3;
@@ -2365,8 +2365,12 @@ function drawCreep(c){
       ctx.restore();
     }
   }
-  ctx.save();ctx.translate(c.x,c.y+hover);
-  if(flip)ctx.scale(-1,1);
+  const hit=ART.motion&&motion?hitReaction(motion,c.type):0;
+  const breath=ART.motion&&!moving?Math.sin(artClock*2+c.seed)*.008:0;
+  ctx.save();ctx.translate(c.x-c.dx*hit*4*k,c.y-c.dy*hit*4*k+hover+14*k);
+  if(ART.motion&&motion)ctx.rotate(motion.turn+Math.sin(motion.heading)*.035+hit*.04*(flip?-1:1));
+  const width=ART.motion&&motion?.moving?(.82+.18*Math.abs(motion.facing)):1;
+  ctx.scale((flip?-1:1)*(width+hit*.04),1+breath-hit*.035);ctx.translate(0,-14*k);
   if(c.enraged){ctx.save();ctx.globalCompositeOperation='lighter';
     ctx.globalAlpha=.18+.1*Math.sin(time*8);
     ctx.fillStyle='#ff5c7a';ctx.beginPath();ctx.arc(0,-30*k,34*k,0,TAU);ctx.fill();ctx.restore();}
@@ -3152,26 +3156,27 @@ Object.assign(PALSETS.warden,{suit:'#538b91',torso:'#2b575f',trim:'#b7dbd2',ches
 Object.assign(PALSETS.saboteur,{suit:'#a86c51',torso:'#6c4039',trim:'#e6b991',visor:'#ffdb90',pauld:true,pauldCol:'#b48768'});
 function rebakeSmooth(){
   for(const key of Object.keys(PALSETS)){
-    const pal=PALSETS[key];SPR.mech[key]=Array.from({length:24},(_,f)=>{const a=RUNF[Math.floor(f/4)],b=RUNF[(Math.floor(f/4)+1)%6],t=(f%4)/4,pose={};for(const k of Object.keys(a))pose[k]=a[k]+(b[k]-a[k])*t;
+    const pal=PALSETS[key];SPR.mech[key]=Array.from({length:24},(_,f)=>{const pose=gaitPose(key,f/24);
       return bake(g=>{mech(g,0,33,1,{...pal,pose});g.save();g.translate(0,33+pose.bob);g.strokeStyle=pal.trim;g.lineWidth=1;
         // Etched breastplates distinguish the field units even at small sizes.
         g.beginPath();g.moveTo(-5,-39);g.lineTo(0,-35);g.lineTo(5,-39);g.stroke();
         if(key==='runner'){poly(g,[[-8,-63],[-2,-75],[4,-65]]);g.fillStyle='#d1d5ba';g.fill();}
         if(key==='warden'){artCircle(g,-2,-38,3,'#d3f5c2');}
         g.restore();});});
-    SPR.mech[key+'_s']=bake(g=>mech(g,0,33,1,{...pal,pose:STAND}));
+    SPR.mech[key+'_s']=bake(g=>mech(g,0,33,1,{...pal,pose:{...STAND,lean:key==='saboteur'?.16:0,bob:key==='saboteur'?2:0}}));
   }
   SPR.shade=bake(g=>{shadeS(g,0,24,1,1,{cloak:'#54677f',trim:'#b8a9de',hood:'#344056',eyes:'#efd9ff'});g.strokeStyle='#b2a1d0';g.lineWidth=1;poly(g,[[-12,-15],[0,-33],[12,-15]]);g.stroke();});
   SPR.shadeEl=bake(g=>shadeS(g,0,24,1,1,{cloak:'#875577',trim:'#e2b3da',hood:'#503754',eyes:'#fff0d5'}));
+  SPR.shadeRun=Array.from({length:16},(_,f)=>bake(g=>shadeS(g,0,24,1,1,{cloak:'#54677f',trim:'#b8a9de',hood:'#344056',eyes:'#efd9ff',sway:Math.sin(f*TAU/16)*3,lift:Math.cos(f*TAU/16)*1.2})));
+  SPR.shadeElRun=Array.from({length:16},(_,f)=>bake(g=>shadeS(g,0,24,1,1,{cloak:'#875577',trim:'#e2b3da',hood:'#503754',eyes:'#fff0d5',sway:Math.sin(f*TAU/16)*3,lift:Math.cos(f*TAU/16)*1.2})));
   /* ▲ boss: decorative wings applied across the idle pose AND every
      walk-cycle frame so the remaster travels with the animation. */
   const bossDeco=g=>{g.save();g.translate(0,38);g.fillStyle='#b6a0c7';g.strokeStyle='#211f39';g.lineWidth=1.5;
     for(const side of [-1,1]){poly(g,[[side*13,-56],[side*26,-66],[side*29,-48],[side*23,-36],[side*17,-46]]);g.fill();g.stroke();}
     artCircle(g,0,-35,5,'#f6dab4','#6d405f',2);artCircle(g,0,-35,2,'#fff6dd');g.restore();};
   SPR.boss=bake(g=>{bossM(g,0,38,1);bossDeco(g);});
-  SPR.bossRun=Array.from({length:12},(_,f)=>{
-    const a=BOSSF[Math.floor(f/2)],b=BOSSF[(Math.floor(f/2)+1)%6],t=(f%2)/2,pose={};
-    for(const k in a)pose[k]=a[k]+(b[k]-a[k])*t;
+  SPR.bossRun=Array.from({length:24},(_,f)=>{
+    const pose=bossGaitPose(f/24);
     return bake(g=>{bossM(g,0,38,1,pose);bossDeco(g);});
   });
 }
@@ -3230,9 +3235,16 @@ drawTowerBody=function(t,ghost){
 };
 
 drawCreep=function(c){
-  let v=visualUnits.get(c);if(!v){v={hp:c.hp,shown:c.hp,hit:-10,born:artClock};visualUnits.set(c,v);}
-  if(c.hp<v.hp)v.hit=artClock;v.hp=c.hp;
-  v.shown+=(c.hp-v.shown)*(1-Math.exp(-visualDelta*ART.healthEase));
+  let v=visualUnits.get(c);if(!v){v={hp:c.hp,shown:c.hp,hit:-10,born:artClock,motion:createUnitMotion(c)};visualUnits.set(c,v);}
+  const dt=paused&&state==='play'?0:visualDelta,previousPhase=v.motion.phase;
+  advanceUnitMotion(v.motion,c,dt,ART.motion);
+  if(c.hp<v.hp){v.hit=artClock;v.motion.hitAge=0;}v.hp=c.hp;
+  v.shown+=(c.hp-v.shown)*(1-Math.exp(-dt*ART.healthEase));
+  // Foot-contact dust is bounded and deterministic, independent of render frame rate.
+  if(ART.motion&&dt>0&&v.motion.moving&&c.type!=='shade'&&Math.floor(previousPhase*2)!==Math.floor(v.motion.phase*2)&&parts.length<Q().parts-2){
+    const heavy=c.type==='boss'||c.type==='brute',k=SCALE[c.type];
+    for(let j=0;j<(heavy?2:1);j++)parts.push({x:c.x+(j?5:-5)*k,y:c.y+13*k,vx:(j?12:-12),vy:-7,life:heavy?.28:.18,max:heavy?.28:.18,color:hexA(TPAL.speck,heavy?.3:.2),s:heavy?2:1.1,rot:0,vr:0,petal:false});
+  }
   remasteredCreep(c);
   const k=SCALE[c.type]*(c.elite?1.06:1),bw=c.type==='boss'?46:c.r*2+8,bh=c.type==='boss'?5:3.5,y=c.y-58*k-8,pct=Math.max(0,c.hp/c.maxhp),lag=Math.max(pct,v.shown/c.maxhp);
   /* ▲ GLM: remaster bar re-colored through the shared color-vision palette. */
@@ -3246,7 +3258,12 @@ drawCreep=function(c){
 
 // Death echoes observe the existing burst event after rewards are already assigned.
 const legacyBurst=burst;
-burst=function(c){legacyBurst(c);if(ART.motion){if(echoes.length>=Q().echo)echoes.shift();echoes.push({x:c.x,y:c.y,type:c.type,elite:c.elite,age:0,seed:c.seed,dx:c.dx});}};
+burst=function(c){legacyBurst(c);if(ART.motion){
+  if(echoes.length>=Math.min(12,Q().echo))echoes.shift();
+  const motion=visualUnits.get(c)?.motion,key=c.elite&&ELITE_OF[c.type]?'elite':c.type,frames=c.type==='boss'?SPR.bossRun:c.type==='shade'?(c.elite?SPR.shadeElRun:SPR.shadeRun):SPR.mech[key];
+  const sprite=frames?.[Math.floor((motion?.phase||0)*frames.length)%frames.length]||(c.type==='boss'?SPR.boss:c.type==='shade'?SPR.shade:SPR.mech[key+'_s']);
+  echoes.push({x:c.x,y:c.y,type:c.type,elite:c.elite,age:0,seed:c.seed,flip:motion?motion.facing<0:c.dx<0,sprite});
+}};
 drawSky=function(){
   // drawSky never consumes gameplay randomness; stars are low meadow fireflies.
   const now=performance.now();visualDelta=Math.min(.05,(now-visualStamp)/1000);visualStamp=now;
@@ -3262,8 +3279,21 @@ drawSky=function(){
 };
 drawMist=function(){
   ctx.save();for(let i=0;i<Math.min(3,Q().fog||0)+0;i++){ctx.globalAlpha=.025;const x=((i*W/3+artClock*5)%(W+300))-150;ctx.drawImage(fogSpr,x,120+i*210,390,100);}ctx.restore();
-  for(let i=echoes.length-1;i>=0;i--){const e=echoes[i];if(!paused)e.age+=visualDelta;if(e.age>.45){echoes.splice(i,1);continue;}const p=e.age/.45,k=SCALE[e.type]*(1-p*.35),key=e.elite&&ELITE_OF[e.type]?'elite':e.type;
-    const spr=e.type==='boss'?SPR.boss:e.type==='shade'?SPR.shade:SPR.mech[key+'_s'];ctx.save();ctx.globalAlpha=(1-p)*.6;ctx.translate(e.x,e.y+p*10);ctx.rotate((dr(e.seed)-.5)*p*.5);ctx.drawImage(spr,-AX*k,-AY*k,FW*k,FH*k);ctx.restore();}
+  if(!ART.motion)echoes.length=0;
+  for(let i=echoes.length-1;i>=0;i--){
+    const e=echoes[i],duration=e.type==='boss'?.65:.48;if(!paused)e.age+=visualDelta;if(e.age>duration){echoes.splice(i,1);continue;}
+    const p=e.age/duration,k=SCALE[e.type]*(e.elite?1.06:1),spr=e.sprite;
+    ctx.save();ctx.translate(e.x,e.y);if(e.flip)ctx.scale(-1,1);
+    if(e.type==='shade'){
+      ctx.globalAlpha=(1-p)*.65;ctx.translate(Math.sin(e.seed+p*4)*p*7,-p*22);ctx.scale(1-p*.4,1+p*.3);ctx.drawImage(spr,-AX*k,-AY*k,FW*k,FH*k);
+    }else{
+      const pieces=qLevel()==='low'?3:5,sw=spr.width/pieces,dw=FW*k/pieces;
+      for(let j=0;j<pieces;j++){
+        const spread=j-(pieces-1)/2;ctx.save();ctx.globalAlpha=(1-p)*.8;ctx.translate(spread*p*10,p*p*28-Math.sin(p*Math.PI)*(5+dr(e.seed+j)*7));ctx.rotate(spread*p*.16);
+        ctx.drawImage(spr,j*sw,0,sw,spr.height,-AX*k+j*dw,-AY*k,dw,FH*k);ctx.restore();
+      }
+    }ctx.restore();
+  }
 };
 const legacyRing=ringAt;
 ringAt=function(x,y,r,color,alpha,rot){ctx.save();ctx.fillStyle=hexA(color,.025);ctx.beginPath();ctx.arc(x,y,r,0,TAU);ctx.fill();ctx.strokeStyle=hexA(color,alpha*.4);ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([3,9]);ctx.lineDashOffset=ART.motion?(rot||0):0;ctx.strokeStyle=hexA(color,alpha);ctx.stroke();ctx.restore();};
@@ -3353,7 +3383,7 @@ const BASTION_TESTS={
       T.ap(kx,-10,.1,'left knee x');T.ap(ky,-14,.1,'left knee y');
       const fx=kx+Math.sin(p.ll+p.kl)*12.1, fy=ky+Math.cos(p.ll+p.kl)*12.1;
       T.ap(fx,-9,.1,'left foot x');T.ap(fy,-2,.1,'left foot y');
-      T.ok(Array.isArray(SPR.bossRun)&&SPR.bossRun.length===12,'12 boss run frames');});
+      T.ok(Array.isArray(SPR.bossRun)&&SPR.bossRun.length===24,'24 boss run frames');});
     // -- path --
     T.t('path: posAt(0) at breach end',()=>{const p=posAt(0);
       T.ap(p.x,WAY[0].x,.5,'x');T.ap(p.y,WAY[0].y,.5,'y');});
@@ -3469,7 +3499,7 @@ muted=PREFS.muted;
 applyMotion();
 applyTheme(PREFS.themeIx);
 renderPreview(1);renderInspector();showOverlay('start');
-observeCloud(next=>{
+if(!MOTION_LAB)observeCloud(next=>{
   cloudAvailable=next.available;
   cloudMessage=next.error||'';
   if(!next.error){
@@ -3479,9 +3509,29 @@ observeCloud(next=>{
   if(state==='menu')showOverlay('start');
 });
 startPhaserScene(cv,renderCanvas,()=>frame(performance.now()),W,H);
+// Local development fixture: exercise every rig and effect without writing player progress.
+if(MOTION_LAB){
+  const lab=document.createElement('div');lab.style.cssText='position:fixed;left:30px;bottom:8px;z-index:99;display:flex;gap:8px;padding:8px;background:#111d2eee;border:1px solid #a8cbe0;border-radius:8px';
+  lab.innerHTML='<button id="labRestart">ALL CHARACTERS</button><button id="labCrowd">CROWD 40</button><button id="labSlow">SLOW ×0.35</button><button id="labHit">HIT REACTION</button><button id="labDeath">DEATH EFFECTS</button>';
+  document.body.append(lab);
+  for(const button of lab.querySelectorAll('button'))button.style.cssText='padding:10px;background:#29415a;color:#f1e3ca;border:1px solid #9ac1d6;border-radius:5px;font:11px monospace';
+  for(const type of Object.keys(SCALE))SCALE[type]*=1.65;
+  const preview=(groups=1)=>{resetState();state='play';idleOn=false;overlay.style.display='none';
+    const types=['runner','soldier','brute','swarm','warden','saboteur','shade','boss'];
+    for(let i=0;i<8*groups;i++){const type=types[i%8];
+      doSpawn(type);const c=creeps.at(-1);c.dist=100+(i%8)*98+Math.floor(i/8)*14;c.seed=i*.8;c.maxhp=c.hp=1000;c.elite=false;c.regen=0;c.sabT=999;
+      const p=posAt(c.dist);c.x=p.x;c.y=p.y;c.dx=p.dx;c.dy=p.dy;c.lane=0;
+    }showBanner('LOCAL ANIMATION PREVIEW','RUNNER · SOLDIER · BRUTE · SWARM · WARDEN · SABOTEUR · SHADE · BOSS');};
+  $('labRestart').onclick=()=>preview();
+  $('labCrowd').onclick=()=>preview(5);
+  $('labSlow').onclick=()=>{for(const c of creeps){c.slowT=c.slowT>0?0:999;c.slowF=.35;}};
+  $('labHit').onclick=()=>{for(const c of creeps)hurt(c,80,{pierce:true});};
+  $('labDeath').onclick=()=>{for(const c of creeps){burst(c);c.dead=true;}};
+  preview();
+}
 if(/devtest=1/.test(location.search)){
   setTimeout(()=>{const ok=BASTION_TESTS.runAll();BASTION_TESTS.report();
     showBanner(ok?'DEV TESTS: ALL PASS':'DEV TESTS: FAILURES',BASTION_TESTS.pass+' passed · '+BASTION_TESTS.fail+' failed — see console',ok?'':'bad');},600);
 }
-window.BASTION={version:'four-frontiers-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
+window.BASTION={version:'living-units-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
 

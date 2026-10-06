@@ -45,6 +45,12 @@ Each map has its own journey and best-wave record for each guest/account. Schema
 
 Run `npm run test:maps` with Node 22.6+ for route, bridge, save migration and account-isolation checks. `?devtest=1` runs the in-game checks on the selected battlefield.
 
+## Character animation
+
+Each mechanical type uses a distinct cached 24-frame gait. Footstep phase follows actual path distance, including slows, haste and game-speed changes. Boss legs use inverse kinematics with a grounded support foot; shades have a 16-frame flowing cloak. Turning eases the body and facing, while brief weighted hit reactions affect presentation only. Mechanical deaths break the current sprite into falling armor fragments; shades dissolve upward. At most 12 death echoes are retained, with fewer fragments at low quality. Pause freezes the pose and reduced motion uses still sprites.
+
+Run `npm run test:motion` for frame-rate independence, slow/speed behavior, pause, stopped units, shortest-path turns, grounded boss feet and hit decay. The existing in-game tests also lock gameplay balance. A development-only `?animationlab=1&devtest=1` fixture previews all eight enemy types, slow/hit/death effects and a 40-unit crowd without saving or connecting to player accounts. This fixture is disabled in production builds.
+
 ## Mobile controls
 
 Tap a tower type and then a free cell to build. Hold a tower type for details. Tap a built tower to upgrade or sell. Drag with one finger; pinch with two fingers to zoom. FIT shows the whole map.
