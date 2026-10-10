@@ -25,9 +25,14 @@ import { careerSeal } from './career-art';
 import { createFeaturePanels } from './feature-panels';
 import { serializeBattle, sanitizeBattle, towerRuntimeFields } from './battle-save';
 import { pinchScale, gestureIsTap, fittedMapWidth } from './mobile-input';
+import { createSessionStorage } from './session-storage';
+const MOTION_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('animationlab');
+const TOWER_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('towerlab');
+const PLAY_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('playlab');
+const playerStorage=MOTION_LAB||TOWER_LAB||PLAY_LAB?createSessionStorage():window.localStorage;
 const RELEASE='frontier-protocol-1';
 let career=normalizeCareer(null);
-try{career=normalizeCareer(JSON.parse(localStorage.getItem(careerKey(localStorage.getItem(SAVE_OWNER_KEY)||'guest'))||'null'));}catch(e){}
+try{career=normalizeCareer(JSON.parse(playerStorage.getItem(careerKey(playerStorage.getItem(SAVE_OWNER_KEY)||'guest'))||'null'));}catch(e){}
 
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
 const cv=document.getElementById('cv');
@@ -43,21 +48,18 @@ const lt=(h,f)=>{const n=parseInt(h.slice(1),16);
   return `rgb(${r},${g},${b})`;};
 const dr=i=>{const v=Math.sin(i*127.13+311.7)*43758.5453;return v-Math.floor(v);};
 const BEST_KEY='bastion_orchid_best', MAP_KEY='bastion_selected_map';
-try{activateMap(localStorage.getItem(MAP_KEY));}catch(e){}
-const saveOwner=()=>localStorage.getItem(SAVE_OWNER_KEY)||'guest';
-const selectedSave=()=>readMapSave(localStorage,saveOwner(),activeMap.id);
-const removeSelectedSave=()=>deleteMapSave(localStorage,saveOwner(),activeMap.id);
+try{activateMap(playerStorage.getItem(MAP_KEY));}catch(e){}
+const saveOwner=()=>playerStorage.getItem(SAVE_OWNER_KEY)||'guest';
+const selectedSave=()=>readMapSave(playerStorage,saveOwner(),activeMap.id);
+const removeSelectedSave=()=>deleteMapSave(playerStorage,saveOwner(),activeMap.id);
 let cloudAccount=null,cloudAvailable=false,cloudMessage='Connecting to Google save…';
 const SAVE_SCHEMA=4, PREFS_KEY='bastion_orchid_prefs';
-const loadBest=(mapId=activeMap.id)=>{try{const owner=saveOwner();return +(localStorage.getItem(BEST_KEY+':'+owner+':'+mapId)??(mapId==='orchid'?(localStorage.getItem(BEST_KEY+':'+owner)??(owner==='guest'?localStorage.getItem(BEST_KEY):null)):null))||0;}catch(e){return 0;}};
-const saveBest=(v,mapId=activeMap.id)=>{try{localStorage.setItem(BEST_KEY+':'+saveOwner()+':'+mapId,String(v));}catch(e){}};
+const loadBest=(mapId=activeMap.id)=>{try{const owner=saveOwner();return +(playerStorage.getItem(BEST_KEY+':'+owner+':'+mapId)??(mapId==='orchid'?(playerStorage.getItem(BEST_KEY+':'+owner)??(owner==='guest'?playerStorage.getItem(BEST_KEY):null)):null))||0;}catch(e){return 0;}};
+const saveBest=(v,mapId=activeMap.id)=>{try{playerStorage.setItem(BEST_KEY+':'+saveOwner()+':'+mapId,String(v));}catch(e){}};
 let bestWave=loadBest();
 
 /* ▲ GLM: debug + dev-test activation (never visible in normal play) */
 const DEBUG=(()=>{try{return /(?:debug|devtest)=1/.test(location.search);}catch(e){return false;}})();
-const MOTION_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('animationlab');
-const TOWER_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('towerlab');
-const PLAY_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('playlab');
 
 /* ▲ GLM PHASE 2 — gameplay RNG (seedable) vs cosmetic RNG.
    Gameplay-affecting randomness (elite rolls, spawn lane, card shuffle)
@@ -76,7 +78,7 @@ const PREFS={muted:false,vol:.8,quality:'auto',motion:'auto',cb:false,shake:true
 let prefsT=0;
 function loadPrefs(){
   try{
-    const p=JSON.parse(localStorage.getItem(PREFS_KEY)||'{}');
+    const p=JSON.parse(playerStorage.getItem(PREFS_KEY)||'{}');
     if(typeof p.muted==='boolean')PREFS.muted=p.muted;
     if(Number.isFinite(p.vol))PREFS.vol=Math.min(1,Math.max(0,p.vol));
     if(['auto','high','medium','low'].includes(p.quality))PREFS.quality=p.quality;
@@ -89,7 +91,7 @@ function prefsThemeGate(v){if(v<3)PREFS.themeIx=v;}
 function savePrefs(force){
   const n=performance.now();
   if(!force&&n-prefsT<1000)return; prefsT=n;
-  try{localStorage.setItem(PREFS_KEY,JSON.stringify(PREFS));}catch(e){}
+  try{playerStorage.setItem(PREFS_KEY,JSON.stringify(PREFS));}catch(e){}
 }
 
 /* ▲ GLM PHASE 9/20 — adaptive quality (presentation-only budgets). */
@@ -373,7 +375,7 @@ function saveCareerProgress(){
   if(JSON.stringify(next.maps)===JSON.stringify(career.maps))return;
   const before=new Set(careerMissions(career).filter(m=>m.value>=m.goal).map(m=>m.id));
   career=next;
-  try{localStorage.setItem(careerKey(saveOwner()),JSON.stringify(career));}catch(e){}
+  try{playerStorage.setItem(careerKey(saveOwner()),JSON.stringify(career));}catch(e){}
   if(cloudAccount)queueCareer(career);
   const after=careerMissions(career).filter(m=>m.value>=m.goal);
   const earned=after.find(m=>!before.has(m.id));
@@ -381,7 +383,7 @@ function saveCareerProgress(){
 }
 function selectCareerFinish(id){
   if(!canUseFinish(career,id))return;career.finish=id;career.updatedAt=Date.now();
-  try{localStorage.setItem(careerKey(saveOwner()),JSON.stringify(career));}catch(e){}
+  try{playerStorage.setItem(careerKey(saveOwner()),JSON.stringify(career));}catch(e){}
   if(cloudAccount)queueCareer(career);sfx('tick');
 }
 
@@ -1744,7 +1746,7 @@ function sanitizeLoaded(d){
   const M={};
   for(const k of ['rangeMul','bountyMul','rateMul','dmgMul','frostDmgMul','slowTAdd','sellRefund','costMul','clearBonusMul','upgCost','blueprints','disableRecovery','comboBonus','_chillWeaken']){
     const val=m[k];
-    if(typeof val==='number'&&isFinite(val)){const limits={sellRefund:[0,1],costMul:[.1,100],upgCost:[.1,100],rangeMul:[.1,20],bountyMul:[.01,100],rateMul:[.1,100],dmgMul:[.1,100],frostDmgMul:[.01,100],slowTAdd:[0,60],blueprints:[0,1e6],disableRecovery:[.1,100],comboBonus:[0,10],_chillWeaken:[.05,1]}[k];M[k]=Math.max(limits[0],Math.min(limits[1],val));}
+    if(typeof val==='number'&&isFinite(val)){const limits={sellRefund:[0,1],costMul:[.1,100],upgCost:[.1,100],rangeMul:[.1,20],bountyMul:[.01,100],rateMul:[.1,100],dmgMul:[.1,100],frostDmgMul:[.01,100],slowTAdd:[0,60],blueprints:[0,1e6],disableRecovery:[.1,100],comboBonus:[0,10],clearBonusMul:[.01,100],_chillWeaken:[.05,1]}[k];M[k]=Math.max(limits[0],Math.min(limits[1],val));}
   }
   o.MOD=M;
   o.journeyTypes=Array.isArray(d.journeyTypes)?d.journeyTypes.filter(k=>TORDER.includes(k)):o.towers.map(t=>t.key);
@@ -1762,25 +1764,25 @@ function parsedSave(raw){
 }
 function switchSaveOwner(nextOwner,remoteSave){
   try{
-    switchStorageOwner(localStorage,nextOwner);
+    switchStorageOwner(playerStorage,nextOwner);
     if(nextOwner!=='guest')for(const map of MAPS){
       const legacy=sanitizeLoaded(remoteSave);
       const remote=sanitizeLoaded(cloudAccount?.mapSaves?.[map.id]??(legacy?.mapId===map.id?legacy:null));
-      const local=parsedSave(readMapSave(localStorage,nextOwner,map.id));
+      const local=parsedSave(readMapSave(playerStorage,nextOwner,map.id));
       const record=cloudAccount?.mapRecords?.[map.id]??(map.id==='orchid'?(Object.keys(cloudAccount?.mapRecords||{}).length===0?cloudAccount?.bestWave:legacy?.bestWave):0);
       saveBest(Math.max(loadBest(map.id),remote?.bestWave||0,local?.bestWave||0,record||0),map.id);
-      if(remote&&remote.mapId===map.id&&(!local||remote.at>local.at))writeMapSave(localStorage,nextOwner,map.id,JSON.stringify(remote));
+      if(remote&&remote.mapId===map.id&&(!local||remote.at>local.at))writeMapSave(playerStorage,nextOwner,map.id,JSON.stringify(remote));
       else if(local&&(!remote||local.at>remote.at))queueCloudSave(local);
     }
     bestWave=loadBest();
-    let localCareer=null;try{localCareer=JSON.parse(localStorage.getItem(careerKey(nextOwner))||'null');}catch(e){}
+    let localCareer=null;try{localCareer=JSON.parse(playerStorage.getItem(careerKey(nextOwner))||'null');}catch(e){}
     career=mergeCareer(localCareer,nextOwner==='guest'?null:cloudAccount?.career);
-    for(const map of MAPS){const stored=parsedSave(readMapSave(localStorage,nextOwner,map.id));career=recordCareer(career,map.id,{wave:Math.max(loadBest(map.id),stored?.cleared||0),kills:stored?.kills||0,gold:stored?.goldEarned||0,variety:new Set(stored?.journeyTypes||stored?.towers.map(t=>t.key)||[]).size,legendary:stored?.journeyLegendary||stored?.towers.filter(t=>isLegendaryTower(t.dmgLv,t.rateLv)).length||0,perfect:stored?.lives>=START_LIVES&&stored?.cleared>=MAXW?MAXW:0});}
-    localStorage.setItem(careerKey(nextOwner),JSON.stringify(career));if(cloudAccount)queueCareer(career);
+    for(const map of MAPS){const stored=parsedSave(readMapSave(playerStorage,nextOwner,map.id));career=recordCareer(career,map.id,{wave:Math.max(loadBest(map.id),stored?.cleared||0),kills:stored?.kills||0,gold:stored?.goldEarned||0,variety:new Set(stored?.journeyTypes||stored?.towers.map(t=>t.key)||[]).size,legendary:stored?.journeyLegendary||stored?.towers.filter(t=>isLegendaryTower(t.dmgLv,t.rateLv)).length||0,perfect:stored?.lives>=START_LIVES&&stored?.cleared>=MAXW?MAXW:0});}
+    playerStorage.setItem(careerKey(nextOwner),JSON.stringify(career));if(cloudAccount)queueCareer(career);
   }catch(e){console.warn('Save account switch failed; local progress was not deleted.',e);}
 }
 function chooseMap(id){
-  activateMap(id);localStorage.setItem(MAP_KEY,activeMap.id);bestWave=loadBest();
+  activateMap(id);playerStorage.setItem(MAP_KEY,activeMap.id);bestWave=loadBest();
   resetState();state='menu';applyTheme(themeIx);zoomScale=1;updateMapZoom(false);document.body.dataset.map=activeMap.id;
   document.querySelector('.brand .sub').textContent=activeMap.name+' · '+activeMap.sector;
   footer.querySelector('span').innerHTML='<b>'+activeMap.name+'</b> / '+activeMap.sector+' · TACTICAL DEFENSE';
@@ -1805,7 +1807,7 @@ function showOverlay(kind){
     const ps=probeSave();
     const hasSave=!!(ps&&ps.ok);
     const corrupt=!!(ps&&!ps.ok);
-    const guestSave=cloudAccount&&!hasSave&&parsedSave(readMapSave(localStorage,'guest',activeMap.id));
+    const guestSave=cloudAccount&&!hasSave&&parsedSave(readMapSave(playerStorage,'guest',activeMap.id));
     const needsUsername=!!cloudAccount&&!cloudAccount.username;
     overlay.innerHTML=`<div class="panel" role="dialog" aria-modal="true" aria-label="Bastion start">
       <div class="ov-mark">${IC.keep}</div>
@@ -1858,10 +1860,10 @@ function showOverlay(kind){
       };
     }
     if(guestSave)$('importGuestBtn').onclick=()=>{
-      const raw=readMapSave(localStorage,'guest',activeMap.id);
+      const raw=readMapSave(playerStorage,'guest',activeMap.id);
       const save=parsedSave(raw);
       if(!save)return;
-      writeMapSave(localStorage,cloudAccount.uid,activeMap.id,JSON.stringify(save));
+      writeMapSave(playerStorage,cloudAccount.uid,activeMap.id,JSON.stringify(save));
       queueCloudSave(save);showOverlay('start');
     };
     $('startBtn').onclick=()=>{
@@ -1940,8 +1942,8 @@ function saveGame(force){
       towers:towers.map(t=>({key:t.key,c:t.c,r:t.r,dmgLv:t.dmgLv,rateLv:t.rateLv,
         invested:t.invested,mode:t.mode,kills:t.kills||0,...Object.fromEntries(towerRuntimeFields.map(k=>[k,t[k]||0]))})),
     };
-    writeMapSave(localStorage,saveOwner(),activeMap.id,JSON.stringify(snapshot));
-    if(cloudAccount&&localStorage.getItem(SAVE_OWNER_KEY)===cloudAccount.uid){
+    writeMapSave(playerStorage,saveOwner(),activeMap.id,JSON.stringify(snapshot));
+    if(cloudAccount&&playerStorage.getItem(SAVE_OWNER_KEY)===cloudAccount.uid){
       queueCloudSave(snapshot);
     }
   }catch(e){}
@@ -3607,7 +3609,7 @@ const BASTION_TESTS={
 
 
 // Field features use a separate dialog; cloud refreshes never erase a typed report.
-const featurePanels=createFeaturePanels({career:()=>career,setFinish:selectCareerFinish,owner:saveOwner,account:()=>cloudAccount,submit:submitFeedback,
+const featurePanels=createFeaturePanels({storage:playerStorage,career:()=>career,setFinish:selectCareerFinish,owner:saveOwner,account:()=>cloudAccount,submit:submitFeedback,
   context:()=>({map:activeMap.id,wave:waveNum,version:RELEASE,width:innerWidth,height:innerHeight,quality:qLevel(),fps:Math.round(1000/Math.max(1,QUAL.avg)),touch:matchMedia('(pointer:coarse)').matches}),
   pause:()=>{const wasPaused=paused;if(state==='play'){paused=true;$('pauseBtn').innerHTML=IC.play;saveGame(true);}return()=>{paused=wasPaused;$('pauseBtn').innerHTML=paused?IC.play:IC.pause;};}});
 const journalButton=document.createElement('button');journalButton.className='cbtn';journalButton.id='journalBtn';journalButton.textContent='✦';journalButton.title='Commander journal';journalButton.setAttribute('aria-label','Open commander journal');journalButton.onclick=featurePanels.showCareer;document.querySelector('.controls').append(journalButton);

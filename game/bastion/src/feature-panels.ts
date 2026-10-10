@@ -1,7 +1,9 @@
 import { careerMissions, canUseFinish, FINISHES, type Career, type FinishId } from './progression';
 import { careerSeal } from './career-art';
 import { feedbackDraftKey, validateFeedback, type FeedbackPayload, type FeedbackKind } from './feedback';
+import type { StorageLike } from './map-storage';
 interface PanelOptions {
+  storage: StorageLike;
   career: () => Career; setFinish: (id: FinishId) => void; owner: () => string;
   context: () => { map: string; wave: number; version: string; width: number; height: number; quality: string; fps: number; touch: boolean };
   account: () => { username: string } | null;
@@ -46,7 +48,7 @@ export function createFeaturePanels(options: PanelOptions) {
   const showFeedback = () => {
     const owner = options.owner(), key = feedbackDraftKey(owner), account = options.account();
     let draft: { id?: string; message?: string; kind?: FeedbackKind; rating?: number; diagnostics?: boolean } = {};
-    try { draft = JSON.parse(localStorage.getItem(key) || '{}'); } catch { /* Corrupt drafts start empty. */ }
+    try { draft = JSON.parse(options.storage.getItem(key) || '{}'); } catch { /* Corrupt drafts start empty. */ }
     let id = typeof draft.id === 'string' && /^[A-Za-z0-9_-]{10,80}$/.test(draft.id) ? draft.id : crypto.randomUUID(), attempted = false;
     open('FIELD FEEDBACK', `<p class="feature-note">Help shape the next update. Report a bug, discuss balance, or share an idea.</p><form id="feedbackForm"><div class="feedback-row"><label>CATEGORY<select id="feedbackKind"><option value="bug">BUG / CONTROLS</option><option value="balance">BALANCE / DIFFICULTY</option><option value="idea">IDEA / OTHER</option></select></label><label>YOUR EXPERIENCE<select id="feedbackRating"><option value="5">5 — Loved it</option><option value="4">4 — Enjoyed it</option><option value="3">3 — Mixed</option><option value="2">2 — Needs work</option><option value="1">1 — Frustrating</option></select></label></div><label class="feedback-message">YOUR MESSAGE<textarea id="feedbackText" maxlength="1500" minlength="10" rows="6" required placeholder="What happened? What would you change?" dir="auto"></textarea></label><span id="feedbackCount" class="feedback-count"></span><label class="feedback-consent"><input id="feedbackDiagnostics" type="checkbox"> Include screen size, graphics quality, FPS and touch support to help diagnose issues</label><p class="feature-note">Your player ID, map, wave and game version accompany the report. Your email is not added.</p><p id="feedbackStatus" class="feature-status" role="status" aria-live="polite">${account ? 'The developer receives your report privately.' : 'Sign in with Google from the main menu to send. You can keep or download a draft now.'}</p><div class="feedback-actions"><button class="ov-btn" type="submit" id="feedbackSend" ${account ? '' : 'disabled'}>SEND FEEDBACK</button><button class="ov-btn2" type="button" id="feedbackDownload">DOWNLOAD DRAFT</button></div></form>`);
     const text = root.querySelector<HTMLTextAreaElement>('#feedbackText')!, kind = root.querySelector<HTMLSelectElement>('#feedbackKind')!, rating = root.querySelector<HTMLSelectElement>('#feedbackRating')!, diagnostics = root.querySelector<HTMLInputElement>('#feedbackDiagnostics')!, status = root.querySelector<HTMLElement>('#feedbackStatus')!;
@@ -56,7 +58,7 @@ export function createFeaturePanels(options: PanelOptions) {
     const keep = () => {
       if (attempted) { id = crypto.randomUUID(); attempted = false; }
       let saved = true;
-      try { localStorage.setItem(key, JSON.stringify({ id, message: text.value, kind: kind.value, rating: +rating.value, diagnostics: diagnostics.checked })); }
+      try { options.storage.setItem(key, JSON.stringify({ id, message: text.value, kind: kind.value, rating: +rating.value, diagnostics: diagnostics.checked })); }
       catch { saved = false; status.textContent = 'Device storage is unavailable. Download your draft before closing.'; }
       root.querySelector('#feedbackCount')!.textContent = `${text.value.length} / 1500 · ${saved ? 'DRAFT SAVED ON THIS DEVICE' : 'DOWNLOAD TO KEEP YOUR DRAFT'}`;
     };
@@ -72,7 +74,7 @@ export function createFeaturePanels(options: PanelOptions) {
       let report: FeedbackPayload; try { report = payload(); } catch (error) { status.textContent = (error as Error).message; return; }
       attempted = true;
       send.disabled = true; text.readOnly = true; kind.disabled = rating.disabled = diagnostics.disabled = true; status.textContent = 'Sending your report…';
-      try { await options.submit(report); try { localStorage.removeItem(key); } catch { /* Report already safely stored. */ } status.textContent = 'REPORT RECEIVED — thank you for helping improve BASTION.'; send.textContent = 'REPORT RECEIVED'; }
+      try { await options.submit(report); try { options.storage.removeItem(key); } catch { /* Report already safely stored. */ } status.textContent = 'REPORT RECEIVED — thank you for helping improve BASTION.'; send.textContent = 'REPORT RECEIVED'; }
       catch (error) { status.textContent = `${(error as Error).message} Your draft is kept. Retry when connected.`; send.disabled = false; text.readOnly = false; kind.disabled = rating.disabled = diagnostics.disabled = false; }
     };
     root.querySelector<HTMLButtonElement>('#feedbackDownload')!.onclick = () => {
