@@ -15,7 +15,7 @@ import { SAVE_OWNER_KEY, readMapSave, writeMapSave, deleteMapSave, switchStorage
 import { drawEmberField, drawEmberAtmosphere, EMBER_COVER } from './ember-art';
 import { drawFrontierField, drawFrontierAtmosphere, FROST_COVER, SUNSPIRE_COVER } from './frontier-art';
 import { createUnitMotion, advanceUnitMotion, gaitPose, bossGaitPose, hitReaction } from './unit-motion';
-import { getTowerSkin, getTowerArt, drawSkinHead, drawLegendary, towerPortrait, isLegendaryTower } from './tower-skins';
+import { getTowerSkin, getTowerArt, drawSkinHead, drawLegendary, towerPortrait, isLegendaryTower, registerOrchidOriginal } from './tower-skins';
 import { startPhaserScene } from './phaser-scene';
 import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, USERNAME_HINT } from './cloud';
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
@@ -3197,12 +3197,53 @@ rebakeSmooth();
 const remasteredCreep=oldCreep;
 
 function artArmor(g,x,y,w,h,col){const f=g.createLinearGradient(x,y,x,y+h);f.addColorStop(0,lt(col,1.35));f.addColorStop(.48,col);f.addColorStop(1,lt(col,.65));rr(g,x,y,w,h,3);g.fillStyle=f;g.fill();g.strokeStyle='#101a26';g.lineWidth=1.8;g.stroke();g.strokeStyle='#d6e5e15c';g.lineWidth=.8;g.beginPath();g.moveTo(x+3,y+1);g.lineTo(x+w-3,y+1);g.stroke();}
+function artBase(key){bakeBase(key,g=>{const col=TOWERS[key].color;g.save();g.fillStyle='#060c17';g.beginPath();g.ellipse(1,7,34,20,0,0,TAU);g.fill();
+  poly(g,[[-30,-8],[-18,-21],[17,-21],[30,-7],[30,8],[16,21],[-17,21],[-30,7]]);g.fillStyle='#25394a';g.fill();g.strokeStyle='#101a29';g.lineWidth=3;g.stroke();
+  poly(g,[[-27,-9],[-17,-19],[16,-19],[27,-8],[26,5],[15,15],[-15,15],[-27,4]]);g.fillStyle='#556779';g.fill();g.strokeStyle='#a9babd88';g.lineWidth=1;g.stroke();
+  g.beginPath();g.ellipse(0,-1,21,13,0,0,TAU);g.fillStyle='#192b3b';g.fill();g.strokeStyle=hexA(col,.6);g.lineWidth=2;g.stroke();
+  g.beginPath();g.ellipse(0,-3,15,9,0,0,TAU);g.fillStyle='#3c5262';g.fill();
+  for(const x of [-22,22]){g.fillStyle='#172b39';g.fillRect(x-3,-5,6,9);g.fillStyle=col;g.fillRect(x-2,-4,4,2);}
+  for(const x of [-13,13]){artCircle(g,x,12,1.6,'#d3c5a4');}g.restore();});}
+TORDER.forEach(artBase);
+const ORCHID_BASES={...BASES};
+
+const orchidHeadBolt=function(g,lv,rc,fl){
+  g.save();g.translate(rc,0);const ys=lv===0?[0]:lv<3?[-5,5]:[-7,0,7];
+  for(const y of ys){artArmor(g,5,y-2.3,23+lv,4.6,'#788787');g.fillStyle='#1e303b';g.fillRect(23,y-3,4,6);g.fillStyle='#e3be81';g.fillRect(27,y-2.4,3,4.8);}
+  artArmor(g,-17,-10-lv,26,20+lv*2,'#827259');artArmor(g,-13,-8-lv,17,16+lv*2,'#bc9b62');
+  g.fillStyle='#253a46';for(let i=0;i<3;i++)g.fillRect(-11+i*4,-5,2,10);
+  artCircle(g,-1,0,4,'#344454','#e2c18b',1.4);artCircle(g,-1,0,1.6,'#f8e1ad');
+  for(let i=0;i<lv;i++)artArmor(g,-18,-12-i*3,10,3,'#bbc1a6');
+  if(fl>0)for(const y of ys)flame(g,32,y,0,(8+lv*2)*Math.min(1.5,fl/.06+.4));g.restore();
+};
+const orchidHeadLob=function(g,lv,rc,fl){g.save();g.rotate(-.85);artArmor(g,-14,-10,28,20,'#865e4c');
+  for(const x of (lv===3?[-7,7]:[0])){const w=lv===3?10:14+lv*2,top=-31-lv*2-rc;artArmor(g,x-w/2,top,w,34+lv*2,'#75818b');
+    g.fillStyle='#d5af7a';g.fillRect(x-w/2,-14,w,4);g.beginPath();g.ellipse(x,top,w*.6,4,0,0,TAU);g.fillStyle='#122331';g.fill();g.strokeStyle='#acbec2';g.lineWidth=2;g.stroke();
+    if(fl>0)flame(g,x,top-4,-Math.PI/2,11+lv*2);}
+  for(let i=0;i<lv+1;i++){g.fillStyle='#e5b47c';g.fillRect(-11+i*6,5,3,3);}g.restore();};
+const orchidHeadRail=function(g,t,rc,fl){const lv=t.dmgLv,L=39+lv*4,charge=Math.max(0,Math.min(1,1-t.cool*statRate(t)));g.save();g.translate(rc,0);
+  artArmor(g,-18,-9,20,18,'#915e71');for(const s of [-1,1]){artArmor(g,-5,s*6-3,L,6,'#8d9fad');g.fillStyle='#252d42';g.fillRect(2,s*6-1,L-9,2);}
+  g.fillStyle='#ec9aa9';g.fillRect(-8,-1.3,(L+6)*charge,2.6);for(let i=0;i<3+lv;i++){artArmor(g,i*7, -11,3,22,'#485468');}
+  artCircle(g,-11,0,4,'#ffced2','#442f43',1.5);if(fl>0){star4(g,L-3,0,17,'#ef99ad');star4(g,L-3,0,8,'#fff4e6');}g.restore();};
+const orchidHeadRime=function(g,t){const lv=t.dmgLv,bob=ART.motion?Math.sin(artClock*2.2+t.x)*1.5:0;g.save();g.translate(0,bob-5);
+  g.beginPath();g.ellipse(0,9,16+lv,7,0,0,TAU);g.strokeStyle='#78b9cb';g.lineWidth=2;g.stroke();
+  for(let i=0;i<3+lv;i++){const a=i*TAU/(3+lv)+(ART.motion?artClock*.45:0),x=Math.cos(a)*14,y=Math.sin(a)*7;g.save();g.translate(x,y);diamondPath(g,4+lv);g.fillStyle='#6faec5';g.fill();g.strokeStyle='#c2e3ed';g.lineWidth=1;g.stroke();g.restore();}
+  const h=17+lv*3;poly(g,[[0,-h],[9,0],[0,11],[-9,0]]);const f=g.createLinearGradient(-9,0,9,0);f.addColorStop(0,'#5685a6');f.addColorStop(.48,'#d6f5f0');f.addColorStop(.52,'#a5dbe7');f.addColorStop(1,'#417698');g.fillStyle=f;g.fill();g.strokeStyle='#d9f5e9';g.lineWidth=1.2;g.stroke();
+  artGlow(g,0,0,19,'#c0edf5',.17);g.restore();};
+const originalOrchidTesla=headTesla;
+const orchidHeadTesla=function(g,t){originalOrchidTesla(g,t);g.save();g.strokeStyle='#a2d3bc';g.lineWidth=2;for(const s of [-1,1]){g.beginPath();g.moveTo(s*10,12);g.lineTo(s*14,-4-t.dmgLv*3);g.lineTo(s*9,-10-t.dmgLv*3);g.stroke();artCircle(g,s*9,-10-t.dmgLv*3,2.5,'#d1efc9','#264747');}g.restore();};
+
+registerOrchidOriginal(ORCHID_BASES,(g,key,lv)=>{
+  const t={key,x:0,c:0,dmgLv:lv,rateLv:0,cool:0,spin:0};
+  if(key==='bolt')orchidHeadBolt(g,lv,0,0);else if(key==='mortar')orchidHeadLob(g,lv,0,0);else if(key==='rail')orchidHeadRail(g,t,0,0);else if(key==='frost')orchidHeadRime(g,t);else orchidHeadTesla(g,t);
+});
+
 function refreshTowerSkins(){decorateShop();hideShopInfo();}
-headBolt=function(g,lv,rc,fl){drawSkinHead(g,activeMap.id,'bolt',lv,rc,fl,artClock,ART.motion);};
-headLob=function(g,lv,rc,fl){drawSkinHead(g,activeMap.id,'mortar',lv,rc,fl,artClock,ART.motion);};
-headRail=function(g,t,rc,fl){drawSkinHead(g,activeMap.id,'rail',t.dmgLv,rc,fl,artClock,ART.motion);};
-headRime=function(g,t){drawSkinHead(g,activeMap.id,'frost',t.dmgLv,0,0,artClock+t.x*.01,ART.motion);};
-headTesla=function(g,t){drawSkinHead(g,activeMap.id,'tesla',t.dmgLv,0,t.flash,artClock+t.x*.01,ART.motion);};
+headBolt=function(g,lv,rc,fl){if(activeMap.id==='orchid')return orchidHeadBolt(g,lv,rc,fl);drawSkinHead(g,activeMap.id,'bolt',lv,rc,fl,artClock,ART.motion);};
+headLob=function(g,lv,rc,fl){if(activeMap.id==='orchid')return orchidHeadLob(g,lv,rc,fl);drawSkinHead(g,activeMap.id,'mortar',lv,rc,fl,artClock,ART.motion);};
+headRail=function(g,t,rc,fl){if(activeMap.id==='orchid')return orchidHeadRail(g,t,rc,fl);drawSkinHead(g,activeMap.id,'rail',t.dmgLv,rc,fl,artClock,ART.motion);};
+headRime=function(g,t){if(activeMap.id==='orchid')return orchidHeadRime(g,t);drawSkinHead(g,activeMap.id,'frost',t.dmgLv,0,0,artClock+t.x*.01,ART.motion);};
+headTesla=function(g,t){if(activeMap.id==='orchid')return orchidHeadTesla(g,t);drawSkinHead(g,activeMap.id,'tesla',t.dmgLv,0,t.flash,artClock+t.x*.01,ART.motion);};
 
 drawTowerBody=function(t,ghost){
   // Old body retains its original RNG effects and rendering order.
@@ -3506,7 +3547,7 @@ startPhaserScene(cv,renderCanvas,()=>frame(performance.now()),W,H);
 // Local art fixture paints the production sprites and never writes player saves.
 if(TOWER_LAB){
   const panel=document.createElement('div');panel.id='towerLab';panel.style.cssText='position:fixed;inset:0;z-index:99;background:#101b2a;overflow:auto;padding:20px;color:#ecdfc4';
-  panel.innerHTML='<h2 style="font:20px monospace;margin:0 0 12px">BASTION / FOUR MAP ARMORIES</h2><div id="towerLabButtons" style="display:flex;gap:8px;flex-wrap:wrap"></div><canvas id="towerGallery" width="1200" height="648" style="width:100%;max-width:1200px;height:auto;display:block"></canvas>';
+  panel.innerHTML='<h2 style="font:20px monospace;margin:0 0 12px">BASTION / FOUR MAP ARMORIES</h2><div id="towerLabButtons" style="display:flex;gap:8px;flex-wrap:wrap"></div><canvas id="towerGallery" width="1200" height="648" style="width:auto;max-width:100%;max-height:calc(100dvh - 110px);height:auto;display:block"></canvas>';
   document.body.append(panel);
   const controls=$('towerLabButtons');
   const button=(label,action)=>{const b=document.createElement('button');b.textContent=label;b.style.cssText='padding:8px;background:#30465b;color:#fff1d1;border:1px solid #a3bbc5;border-radius:5px';b.onclick=action;controls.append(b);};
@@ -3553,5 +3594,5 @@ if(/devtest=1/.test(location.search)){
   setTimeout(()=>{const ok=BASTION_TESTS.runAll();BASTION_TESTS.report();
     showBanner(ok?'DEV TESTS: ALL PASS':'DEV TESTS: FAILURES',BASTION_TESTS.pass+' passed · '+BASTION_TESTS.fail+' failed — see console',ok?'':'bad');},600);
 }
-window.BASTION={version:'map-armories-1',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
+window.BASTION={version:'distinct-armories-2',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
 

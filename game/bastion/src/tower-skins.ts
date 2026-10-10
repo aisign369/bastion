@@ -1,22 +1,27 @@
 import type { MapId } from './maps';
+import {frontierBase,frontierHead} from './frontier-towers';
 export type TowerKey='bolt'|'frost'|'mortar'|'rail'|'tesla';
 export const TOWER_KEYS:readonly TowerKey[]=['bolt','frost','mortar','rail','tesla'];
 export interface TowerSkin { name:string; metal:string; dark:string; edge:string; trim:string; energy:string; light:string; motif:'leaf'|'forge'|'ice'|'sun' }
 const WORLDS:Record<MapId,{metal:string;dark:string;edge:string;trim:string;light:string;motif:TowerSkin['motif'];names:string[];energies:string[]}>= {
   orchid:{metal:'#657f72',dark:'#233c3d',edge:'#bfcbab',trim:'#cca86b',light:'#ecf1d5',motif:'leaf',
-    names:['THORN STINGER','ORCHID CRYSTAL','SEEDPOD HOWITZER','PETAL LANCE','VERDANT COIL'],energies:['#f6cd88','#abdfed','#eca975','#e6b6df','#afe2b8']},
+    names:['STINGER','RIME COIL','IRON LOB','LONGSHOT','TESLA CHAIN'],energies:['#f2b45c','#9fdcff','#ff9a5c','#ff5c7a','#57e6d0']},
   ember:{metal:'#5d5966',dark:'#222535',edge:'#aaa0a7',trim:'#c98252',light:'#ffe1b2',motif:'forge',
     names:['CINDER STINGER','OBSIDIAN RIME','CALDERA MORTAR','MAGMA LANCE','FURNACE COIL'],energies:['#ffb46b','#b6c7ff','#ff8259','#ffa4d1','#f9d88c']},
   frost:{metal:'#799dad',dark:'#2b485e',edge:'#d3edf5',trim:'#acc9d7',light:'#f0fcff',motif:'ice',
-    names:['POLAR STINGER','GLACIER HEART','AVALANCHE MORTAR','AURORA LANCE','BOREAL COIL'],energies:['#ffe0ab','#b7f0ff','#f6c294','#ccaaff','#a0ffe1']},
+    names:['TUNDRA HARPOON','SNOWFLAKE ENGINE','GLACIER TREBUCHET','AURORA PRISM','BOREAL ANTLERS'],energies:['#c6f0ff','#b7f0ff','#d1f2ff','#ccaaff','#a0ffe1']},
   sunspire:{metal:'#b28b57',dark:'#5d463d',edge:'#e5c488',trim:'#f0d28b',light:'#fff1c4',motif:'sun',
-    names:['SCARAB STINGER','OASIS HEART','PHARAOH MORTAR','SUN SPEAR','OBELISK COIL'],energies:['#ffe0a0','#8dded7','#ffa775','#ffb4cb','#a7e3b8']},
+    names:['SCARAB SENTINEL','COBRA FOUNTAIN','SOLAR BOMBARD','EYE OF RA','ANUBIS GUARDIAN'],energies:['#ffe0a0','#8dded7','#ffca75','#ffe7a7','#a7e3b8']},
 };
 function worldSkins(map:MapId):Record<TowerKey,TowerSkin>{
   const {names,energies,...palette}=WORLDS[map];
   return Object.fromEntries(TOWER_KEYS.map((key,i)=>[key,{...palette,name:names[i],energy:energies[i]}])) as Record<TowerKey,TowerSkin>;
 }
 export const TOWER_SKINS:Record<MapId,Record<TowerKey,TowerSkin>>={orchid:worldSkins('orchid'),ember:worldSkins('ember'),frost:worldSkins('frost'),sunspire:worldSkins('sunspire')};
+// Original projectile highlights accompany the restored Orchid painters.
+Object.assign(TOWER_SKINS.orchid.bolt,{light:'#fff2cf'});Object.assign(TOWER_SKINS.orchid.frost,{light:'#d8f4ff',dark:'#3e7fa8'});
+Object.assign(TOWER_SKINS.orchid.mortar,{metal:'#a8a2b8',dark:'#0a0812',trim:'#d9a441',edge:'#c8c2d4'});
+Object.assign(TOWER_SKINS.orchid.rail,{light:'#ffe9ef'});Object.assign(TOWER_SKINS.orchid.tesla,{light:'#d8fff8'});
 export const getTowerSkin=(map:MapId,key:TowerKey):TowerSkin=>TOWER_SKINS[map][key];
 export const isLegendaryTower=(damage:number,rate:number)=>damage===3&&rate===3;
 const TAU=Math.PI*2;
@@ -33,6 +38,7 @@ function leaf(g:CanvasRenderingContext2D,x:number,y:number,angle:number,s:TowerS
 function crystal(g:CanvasRenderingContext2D,x:number,y:number,w:number,h:number,s:TowerSkin){poly(g,[[x,y-h],[x+w,y],[x,y+h*.38],[x-w,y]],s.energy,s.light);poly(g,[[x,y-h],[x+w,y],[x,y+h*.38]],s.metal);}
 function rays(g:CanvasRenderingContext2D,x:number,y:number,r:number,s:TowerSkin,n=8){g.strokeStyle=s.trim;g.lineWidth=1.5;for(let j=0;j<n;j++){const a=j*TAU/n;g.beginPath();g.moveTo(x+Math.cos(a)*r,y+Math.sin(a)*r);g.lineTo(x+Math.cos(a)*(r+4),y+Math.sin(a)*(r+4));g.stroke();}}
 function base(g:CanvasRenderingContext2D,s:TowerSkin,key:TowerKey){
+  if(s.motif==='ice'||s.motif==='sun'){frontierBase(g,s,key);return;}
   g.fillStyle='#08142266';g.beginPath();g.ellipse(1,7,33,19,0,0,TAU);g.fill();
   if(s.motif==='leaf'){
     for(let j=0;j<6;j++){g.save();g.scale(1,.65);leaf(g,0,0,j*TAU/6,s,31);g.restore();}
@@ -62,6 +68,9 @@ function details(g:CanvasRenderingContext2D,s:TowerSkin,lv:number,x=-13,y=-8){
   else{rays(g,x+9,y+5,4,s,6);circle(g,x+9,y+5,3,s.energy,s.dark);}
 }
 function head(g:CanvasRenderingContext2D,s:TowerSkin,key:TowerKey,lv:number){
+  if(s.motif==='ice'||s.motif==='sun')frontierHead(g,s,key,lv);else forgeHead(g,s,key,lv);
+}
+function forgeHead(g:CanvasRenderingContext2D,s:TowerSkin,key:TowerKey,lv:number){
   if(key==='bolt'){
     const barrels=lv===0?[0]:lv<3?[-5,5]:[-7,0,7];
     for(const y of barrels){plate(g,4,y-2.5,25+lv,5,s);g.fillStyle=s.dark;g.fillRect(25,y-3.5,5,7);g.fillStyle=s.trim;g.fillRect(30,y-2.5,3,5);}
@@ -106,13 +115,16 @@ function head(g:CanvasRenderingContext2D,s:TowerSkin,key:TowerKey,lv:number){
   }
 }
 interface SkinArt { bases:Record<TowerKey,HTMLCanvasElement>;heads:Record<TowerKey,HTMLCanvasElement[]>;icons:Map<string,string> }
+let orchidOriginal:{bases:SkinArt['bases'];paint:(g:CanvasRenderingContext2D,key:TowerKey,lv:number)=>void}|undefined;
+/** Register the actual pre-skins painters, so Orchid is restored rather than approximated. */
+export function registerOrchidOriginal(bases:SkinArt['bases'],paint:NonNullable<typeof orchidOriginal>['paint']){orchidOriginal={bases,paint};cachedMap=undefined;cachedArt=undefined;}
 let cachedMap:MapId|undefined,cachedArt:SkinArt|undefined;
 function canvas(w:number,h:number,x:number,y:number,draw:(g:CanvasRenderingContext2D)=>void){const c=document.createElement('canvas');c.width=w*2;c.height=h*2;const g=c.getContext('2d')!;g.scale(2,2);g.translate(x,y);draw(g);return c;}
 /** Only the current map's 25 sprites are kept. Switching maps releases the previous cache. */
 export function getTowerArt(map:MapId):SkinArt{
   if(cachedMap===map&&cachedArt)return cachedArt;
   const bases={} as SkinArt['bases'],heads={} as SkinArt['heads'];
-  for(const key of TOWER_KEYS){const s=getTowerSkin(map,key);bases[key]=canvas(96,96,48,52,g=>{g.scale(.72,.72);base(g,s,key);});heads[key]=Array.from({length:4},(_,lv)=>canvas(128,112,56,56,g=>head(g,s,key,lv)));}
+  for(const key of TOWER_KEYS){const s=getTowerSkin(map,key);bases[key]=map==='orchid'&&orchidOriginal?orchidOriginal.bases[key]:canvas(96,96,48,52,g=>{g.scale(.72,.72);base(g,s,key);});heads[key]=Array.from({length:4},(_,lv)=>canvas(128,112,56,56,g=>map==='orchid'&&orchidOriginal?orchidOriginal.paint(g,key,lv):head(g,s,key,lv)));}
   cachedMap=map;cachedArt={bases,heads,icons:new Map()};return cachedArt;
 }
 export function drawSkinHead(g:CanvasRenderingContext2D,map:MapId,key:TowerKey,lv:number,recoil=0,flash=0,time=0,motion=true){
@@ -120,11 +132,12 @@ export function drawSkinHead(g:CanvasRenderingContext2D,map:MapId,key:TowerKey,l
   g.save();if(key==='frost')g.translate(0,motion?Math.sin(time*2.2)*1.1:0);else if(key!=='tesla')g.translate(-recoil,0);
   g.drawImage(art.heads[key][lv],-56,-56,128,112);
   if((key==='frost'||key==='tesla')&&motion){
-    const n=key==='frost'?3+lv:2,cy=key==='frost'?2:-24-lv*3;
+    const n=map==='sunspire'&&key==='tesla'?2:key==='frost'?3+lv:2,cy=key==='frost'?(map==='frost'?-7:map==='sunspire'?8:2):-24-lv*3;
     for(let j=0;j<n;j++){const a=time*.5+j*TAU/n,x=Math.cos(a)*(14+lv),y=cy+Math.sin(a)*6;circle(g,x,y,1.7,s.energy,s.light);}
   }
   if(flash>0){
-    const x=key==='rail'?41+lv*4:key==='bolt'?35:key==='mortar'?-Math.sin(.85)*(32+lv*3):0,y=key==='mortar'?-Math.cos(.85)*(32+lv*3):key==='tesla'?-28-lv*3:0;
+    const frontier=map==='frost'||map==='sunspire';
+    const x=key==='rail'?(frontier?61+lv*3:41+lv*4):key==='bolt'?(frontier?47+lv*2:35):key==='mortar'?-Math.sin(.85)*(frontier?map==='frost'?36:30:32+lv*3):0,y=key==='mortar'?-Math.cos(.85)*(frontier?map==='frost'?36:30:32+lv*3):key==='tesla'?-28-lv*3:0;
     const size=5+lv*1.5;poly(g,[[x,y-size],[x+size*2,y],[x,y+size],[x+size*.5,y]],s.energy);circle(g,x+size*.5,y,size*.45,s.light);
   }g.restore();
 }
@@ -142,7 +155,7 @@ export function drawLegendary(g:CanvasRenderingContext2D,map:MapId,key:TowerKey,
 }
 export function towerPortrait(map:MapId,key:TowerKey,lv=0,legendary=false):string{
   const art=getTowerArt(map),cacheKey=`${key}:${lv}:${legendary}`;const found=art.icons.get(cacheKey);if(found)return found;
-  const c=canvas(64,64,32,36,g=>{g.drawImage(art.bases[key],-48,-52,96,96);g.scale(.64,.64);if(key==='bolt'||key==='rail')g.rotate(-.6);drawSkinHead(g,map,key,lv,0,0,0,false);});
+  const c=canvas(64,64,32,36,g=>{g.drawImage(art.bases[key],-48,-52,96,96);const scale=key==='rail'&&(map==='frost'||map==='sunspire')?.54:.64;g.scale(scale,scale);if(key==='bolt'||key==='rail')g.rotate(-.6);drawSkinHead(g,map,key,lv,0,0,0,false);});
   if(legendary){const g=c.getContext('2d')!;g.save();g.scale(2,2);g.translate(32,36);g.scale(.7,.7);drawLegendary(g,map,key,0,false);g.restore();}
   const url=c.toDataURL();art.icons.set(cacheKey,url);return url;
 }
