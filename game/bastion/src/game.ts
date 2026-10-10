@@ -17,7 +17,18 @@ import { drawFrontierField, drawFrontierAtmosphere, FROST_COVER, SUNSPIRE_COVER 
 import { createUnitMotion, advanceUnitMotion, gaitPose, bossGaitPose, hitReaction } from './unit-motion';
 import { getTowerSkin, getTowerArt, drawSkinHead, drawLegendary, towerPortrait, isLegendaryTower, registerOrchidOriginal } from './tower-skins';
 import { startPhaserScene } from './phaser-scene';
-import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, USERNAME_HINT } from './cloud';
+import { observeCloud, logInWithGoogle, logOutOfGoogle, setUpdateEmails, setPlayerUsername, queueCloudSave, queueCareer, submitFeedback, USERNAME_HINT } from './cloud';
+import { BALANCE_VERSION, ROLE_TUNING, roleTuning, splashMultiplier, chainMultiplier, waveHealth } from './balance';
+import { battlefieldEvent, environmentRange, EVENTS, EMBER_VENTS } from './battlefield-events';
+import { normalizeCareer, recordCareer, mergeCareer, careerKey, careerMissions, canUseFinish } from './progression';
+import { careerSeal } from './career-art';
+import { createFeaturePanels } from './feature-panels';
+import { serializeBattle, sanitizeBattle, towerRuntimeFields } from './battle-save';
+import { pinchScale, gestureIsTap, fittedMapWidth } from './mobile-input';
+const RELEASE='frontier-protocol-1';
+let career=normalizeCareer(null);
+try{career=normalizeCareer(JSON.parse(localStorage.getItem(careerKey(localStorage.getItem(SAVE_OWNER_KEY)||'guest'))||'null'));}catch(e){}
+
 const MAXW=30, START_GOLD=180, START_LIVES=15, TAU=Math.PI*2;
 const cv=document.getElementById('cv');
 const renderCanvas=document.createElement('canvas');
@@ -37,7 +48,7 @@ const saveOwner=()=>localStorage.getItem(SAVE_OWNER_KEY)||'guest';
 const selectedSave=()=>readMapSave(localStorage,saveOwner(),activeMap.id);
 const removeSelectedSave=()=>deleteMapSave(localStorage,saveOwner(),activeMap.id);
 let cloudAccount=null,cloudAvailable=false,cloudMessage='Connecting to Google save…';
-const SAVE_SCHEMA=3, PREFS_KEY='bastion_orchid_prefs';
+const SAVE_SCHEMA=4, PREFS_KEY='bastion_orchid_prefs';
 const loadBest=(mapId=activeMap.id)=>{try{const owner=saveOwner();return +(localStorage.getItem(BEST_KEY+':'+owner+':'+mapId)??(mapId==='orchid'?(localStorage.getItem(BEST_KEY+':'+owner)??(owner==='guest'?localStorage.getItem(BEST_KEY):null)):null))||0;}catch(e){return 0;}};
 const saveBest=(v,mapId=activeMap.id)=>{try{localStorage.setItem(BEST_KEY+':'+saveOwner()+':'+mapId,String(v));}catch(e){}};
 let bestWave=loadBest();
@@ -46,6 +57,7 @@ let bestWave=loadBest();
 const DEBUG=(()=>{try{return /(?:debug|devtest)=1/.test(location.search);}catch(e){return false;}})();
 const MOTION_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('animationlab');
 const TOWER_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('towerlab');
+const PLAY_LAB=import.meta.env.DEV&&new URLSearchParams(location.search).has('playlab');
 
 /* ▲ GLM PHASE 2 — gameplay RNG (seedable) vs cosmetic RNG.
    Gameplay-affecting randomness (elite rolls, spawn lane, card shuffle)
@@ -60,7 +72,7 @@ const GRNG={
 const CRAND=Math.random;
 
 /* ▲ GLM PHASE 3 — user preferences, stored separately from progress. */
-const PREFS={muted:false,vol:.8,quality:'auto',motion:'auto',cb:false,shake:true,themeIx:0};
+const PREFS={muted:false,vol:.8,quality:'auto',motion:'auto',cb:false,shake:true,themeIx:0,autoWave:false};
 let prefsT=0;
 function loadPrefs(){
   try{
@@ -69,7 +81,7 @@ function loadPrefs(){
     if(Number.isFinite(p.vol))PREFS.vol=Math.min(1,Math.max(0,p.vol));
     if(['auto','high','medium','low'].includes(p.quality))PREFS.quality=p.quality;
     if(['auto','on','off'].includes(p.motion))PREFS.motion=p.motion;
-    PREFS.cb=!!p.cb; PREFS.shake=p.shake!==false;
+    PREFS.autoWave=p.autoWave===true; PREFS.cb=!!p.cb; PREFS.shake=p.shake!==false;
     if(Number.isInteger(p.themeIx)&&p.themeIx>=0)prefsThemeGate(p.themeIx);
   }catch(e){}
 }
@@ -86,7 +98,7 @@ const QLEV={
   medium:{parts:260,petal:28,fog:3,amb:0.6,shake:0.7,runes:true, glow:0.7,echo:28},
   low:   {parts:140,petal:0, fog:0,amb:0.35,shake:0.45,runes:false,glow:0.4,echo:14}
 };
-const QUAL={cur:'high',avg:16.6,lowT:0,highT:0};
+const QUAL={cur:(matchMedia('(pointer:coarse)').matches?'medium':'high'),avg:16.6,lowT:0,highT:0};
 function qLevel(){return PREFS.quality==='auto'?QUAL.cur:PREFS.quality;}
 function Q(){return QLEV[qLevel()];}
 function qualSample(ms){
@@ -268,8 +280,8 @@ function waveMod(w){
   const pool=['armored','haste','comrades','shadow'];
   return pool[(w*11+5)%pool.length];
 }
-function waveDef(w){
-  const hp=1+(w-1)*.30+Math.pow(Math.max(0,w-10),2)*.022;
+function waveDef(w,version=balanceVersion){
+  const hp=waveHealth(w,version);
   const cap=(v,m)=>Math.min(m,v);
   const g=[];
   if(w%5===0)g.push({t:'boss',n:Math.min(6,Math.floor(w/5)),gap:2.6});
@@ -312,12 +324,12 @@ const CARDS=[
    f:()=>{MOD.comboBonus+=.04;}},
 ];
 let cardPool=[];
-function offerCards(){
+function offerCards(savedChoices=null){
   const idx=[...CARDS.keys()];
   /* ▲ GLM: gameplay RNG (card draw) is now seedable. */
-  for(let i=idx.length-1;i>0;i--){const j=Math.floor(GRNG.f()*(i+1));[idx[i],idx[j]]=[idx[j],idx[i]];}
-  cardPool=idx.slice(0,3);
-  state='cards';
+  if(!savedChoices)for(let i=idx.length-1;i>0;i--){const j=Math.floor(GRNG.f()*(i+1));[idx[i],idx[j]]=[idx[j],idx[i]];}
+  cardPool=savedChoices?.length===3?savedChoices:idx.slice(0,3);
+  state='cards';saveGame(true);
   const overlay=$('overlay');
   overlay.style.display='flex';
   overlay.innerHTML=`<div class="panel" role="dialog" aria-modal="true" aria-label="Protocol cards">
@@ -351,6 +363,28 @@ let lives=START_LIVES,gold=START_GOLD,kills=0,goldEarned=0;
 let waveNum=0,cleared=0,waveActive=false,endless=false;
 let spawnQ=[],spawnI=0,spawnClock=0,hpMul=1,curMod=null;
 let idleTimer=0,idleOn=false;
+let balanceVersion=BALANCE_VERSION,waveElapsed=0,eventState=battlefieldEvent(activeMap.id,0,0),lastEventPhase='calm';
+let journeyTypes=new Set(),journeyLegendary=0,resumedCards=null;
+function saveCareerProgress(){
+  if(MOTION_LAB||TOWER_LAB||PLAY_LAB)return;
+  towers.forEach(t=>journeyTypes.add(t.key));
+  journeyLegendary=Math.max(journeyLegendary,towers.filter(t=>isLegendaryTower(t.dmgLv,t.rateLv)).length);
+  const next=recordCareer(career,activeMap.id,{wave:cleared,kills,gold:goldEarned,variety:journeyTypes.size,legendary:journeyLegendary,perfect:lives>=START_LIVES&&cleared>=MAXW?MAXW:0});
+  if(JSON.stringify(next.maps)===JSON.stringify(career.maps))return;
+  const before=new Set(careerMissions(career).filter(m=>m.value>=m.goal).map(m=>m.id));
+  career=next;
+  try{localStorage.setItem(careerKey(saveOwner()),JSON.stringify(career));}catch(e){}
+  if(cloudAccount)queueCareer(career);
+  const after=careerMissions(career).filter(m=>m.value>=m.goal);
+  const earned=after.find(m=>!before.has(m.id));
+  if(earned&&state==='play')showBanner('HONOR EARNED',earned.name+' · OPEN YOUR COMMANDER JOURNAL');
+}
+function selectCareerFinish(id){
+  if(!canUseFinish(career,id))return;career.finish=id;career.updatedAt=Date.now();
+  try{localStorage.setItem(careerKey(saveOwner()),JSON.stringify(career));}catch(e){}
+  if(cloudAccount)queueCareer(career);sfx('tick');
+}
+
 let creeps=[],towers=[],projs=[],shells=[],beams=[],zaps=[],parts=[],floaters=[],rings=[],booms=[],frostFx=[],empFx=[];
 let combo=0,comboT=0,comboMult=1;
 const towerAt=new Map();
@@ -361,9 +395,9 @@ let shake=0,gateFlash=0,time=0;
 let bossVignette=0,bossDieFx=null,lastTouch=false;
 function chillF(){return .55*(MOD._chillWeaken||1);}
 const statDmg=t=>TOWERS[t.key].dmg*Math.pow(TOWERS[t.key].dmgM,t.dmgLv)
-  *MOD.dmgMul*(t.key==='frost'?MOD.frostDmgMul:1);
-const statRate=t=>TOWERS[t.key].rate*MOD.rateMul*Math.pow(TOWERS[t.key].rateM,t.rateLv)*(t.odT>0?2:1);
-const statRange=t=>TOWERS[t.key].range*MOD.rangeMul*((waveActive&&curMod==='shadow')?.85:1);
+  *MOD.dmgMul*(t.key==='frost'?MOD.frostDmgMul:1)*roleTuning(t.key,balanceVersion).damage;
+const statRate=t=>TOWERS[t.key].rate*MOD.rateMul*Math.pow(TOWERS[t.key].rateM,t.rateLv)*(t.odT>0?2:1)*roleTuning(t.key,balanceVersion).rate*(t.key==='frost'?1:eventState.rate);
+const statRange=t=>TOWERS[t.key].range*MOD.rangeMul*roleTuning(t.key,balanceVersion).range*environmentRange(t.key,eventState,waveActive&&curMod==='shadow');
 /* ▲ GLM: single source of truth for build cost (used by input, HUD, render). */
 const towerCost=k=>Math.round(TOWERS[k].cost*MOD.costMul);
 /* ▲ GLM PHASE 21 — centralized, capped, preference-aware screen shake. */
@@ -1118,6 +1152,7 @@ function drawTowerBody(t,ghost){
   }
   if(ghost)ctx.globalAlpha=.62;
   ctx.drawImage(BASES[t.key],-48,-52,96,96);
+  const seal=careerSeal(career.finish);if(seal&&!ghost)ctx.drawImage(seal,-48,-30,96,70);
   if(!ghost&&isLegendaryTower(t.dmgLv,t.rateLv))drawLegendary(ctx,activeMap.id,t.key,artClock,ART.motion);
   if(!ghost&&t===sel){
     const R=28;
@@ -1492,7 +1527,7 @@ function renderInspector(){
         <div><label>RANGE</label><b>${b.range}</b></div>
         <div><label>COST</label><b class="gold">${towerCost(placing)}</b></div>
       </div>
-      ${b.note?`<div class="ins-note">${b.note}</div>`:''}
+      ${b.note?`<div class="ins-note">${b.note}</div>`:''}<div class="role-tip"><b>${ROLE_TUNING[placing].role}</b>${ROLE_TUNING[placing].tip}</div>
       <div class="ins-tip"><b>LMB</b> place · <b>SHIFT</b> keeps placing · <b>RMB / ESC</b> cancels</div>`;
     bindInspectorCaches();return;
   }
@@ -1521,7 +1556,7 @@ function renderInspector(){
         <div><label>KILLS</label><b>${t.kills||0}</b></div>
         <div><label>SPENT</label><b>${t.invested}</b></div>
       </div>
-      ${b.note?`<div class="ins-note">${b.note}</div>`:''}
+      ${b.note?`<div class="ins-note">${b.note}</div>`:''}<div class="role-tip"><b>${ROLE_TUNING[t.key].role}</b>${ROLE_TUNING[t.key].tip}</div>
       <div class="ins-btns">
         ${t.dmgLv===3?`<button class="ubtn abbtn" data-act="abil" ${abReady?'':'disabled'}>
           ◈ ${b.abName} ${abReady?'READY':'… '+Math.ceil(t.abCd)+'s'}
@@ -1674,12 +1709,12 @@ const overlay=$('overlay');
 /* ▲ GLM PHASE 3 — save probing with corruption classification. */
 function sanitizeLoaded(d){
   if(!d||typeof d!=='object'||Array.isArray(d))return null;
-  const v=[1,2,3].includes(d.v);
+  const v=[1,2,3,4].includes(d.v);
   if(!v)return null;
   if(d.mapId!==undefined&&!isMapId(d.mapId))return null;
   const mapId=getMap(d.mapId).id;
   const num=(x,lo,hi,def)=>Number.isFinite(x)?Math.round(Math.min(hi,Math.max(lo,x))):def;
-  const o={v:3,mapId,at:Number.isFinite(d.at)?d.at:0,
+  const o={v:4,mapId,balanceV:d.v===4&&d.balanceV===2?2:1,at:Number.isFinite(d.at)?d.at:0,
     lives:num(d.lives,0,999,START_LIVES),
     gold:num(d.gold,0,1e9,START_GOLD),
     waveNum:num(d.waveNum,0,1e6,0),
@@ -1702,16 +1737,23 @@ function sanitizeLoaded(d){
         rateLv:Math.min(3,Math.max(0,td.rateLv|0)),
         invested:Math.round(td.invested),
         mode:['first','strong','last'].includes(td.mode)?td.mode:'first',
-        kills:Math.max(0,td.kills|0)});
+        kills:Math.max(0,td.kills|0),...Object.fromEntries(towerRuntimeFields.map(k=>[k,Number.isFinite(td[k])?Math.min(1000,Math.max(k==='ang'?-1000:0,td[k])):0]))});
     }
   }
   const m=(d.MOD&&typeof d.MOD==='object')?d.MOD:{};
   const M={};
   for(const k of ['rangeMul','bountyMul','rateMul','dmgMul','frostDmgMul','slowTAdd','sellRefund','costMul','clearBonusMul','upgCost','blueprints','disableRecovery','comboBonus','_chillWeaken']){
     const val=m[k];
-    if(typeof val==='number'&&isFinite(val))M[k]=val;
+    if(typeof val==='number'&&isFinite(val)){const limits={sellRefund:[0,1],costMul:[.1,100],upgCost:[.1,100],rangeMul:[.1,20],bountyMul:[.01,100],rateMul:[.1,100],dmgMul:[.1,100],frostDmgMul:[.01,100],slowTAdd:[0,60],blueprints:[0,1e6],disableRecovery:[.1,100],comboBonus:[0,10],_chillWeaken:[.05,1]}[k];M[k]=Math.max(limits[0],Math.min(limits[1],val));}
   }
   o.MOD=M;
+  o.journeyTypes=Array.isArray(d.journeyTypes)?d.journeyTypes.filter(k=>TORDER.includes(k)):o.towers.map(t=>t.key);
+  o.journeyLegendary=num(d.journeyLegendary,0,400,0);
+  if(d.v===4&&d.battle){
+    if(!Array.isArray(d.towers)||d.towers.length!==o.towers.length)return null;
+    o.battle=sanitizeBattle(d.battle,mapId,o.towers.length,buildSpawnQueue(o.waveNum,o.balanceV).length);
+    if(!o.battle)return null;
+  }
   return o;
 }
 function parsedSave(raw){
@@ -1731,6 +1773,10 @@ function switchSaveOwner(nextOwner,remoteSave){
       else if(local&&(!remote||local.at>remote.at))queueCloudSave(local);
     }
     bestWave=loadBest();
+    let localCareer=null;try{localCareer=JSON.parse(localStorage.getItem(careerKey(nextOwner))||'null');}catch(e){}
+    career=mergeCareer(localCareer,nextOwner==='guest'?null:cloudAccount?.career);
+    for(const map of MAPS){const stored=parsedSave(readMapSave(localStorage,nextOwner,map.id));career=recordCareer(career,map.id,{wave:Math.max(loadBest(map.id),stored?.cleared||0),kills:stored?.kills||0,gold:stored?.goldEarned||0,variety:new Set(stored?.journeyTypes||stored?.towers.map(t=>t.key)||[]).size,legendary:stored?.journeyLegendary||stored?.towers.filter(t=>isLegendaryTower(t.dmgLv,t.rateLv)).length||0,perfect:stored?.lives>=START_LIVES&&stored?.cleared>=MAXW?MAXW:0});}
+    localStorage.setItem(careerKey(nextOwner),JSON.stringify(career));if(cloudAccount)queueCareer(career);
   }catch(e){console.warn('Save account switch failed; local progress was not deleted.',e);}
 }
 function chooseMap(id){
@@ -1766,14 +1812,14 @@ function showOverlay(kind){
       <h1>BASTION</h1>
       <p class="ov-tag">${activeMap.sector} — thirty waves, endless beyond. Map record: <b class="gold">${bestWave}</b>.</p>
       <div class="map-select" role="group" aria-label="Choose battlefield">${MAPS.map(map=>`<button class="map-card ${map.id===activeMap.id?'selected':''}" data-map="${map.id}" aria-pressed="${map.id===activeMap.id}">${mapPreview(map)}<span><b>${map.name}</b><small>${map.subtitle}</small></span></button>`).join('')}</div>
-      <p class="map-brief">${activeMap.briefing}</p>
+      <p class="map-brief">${activeMap.briefing}</p><div class="map-forecast"><b>${EVENTS[activeMap.id].icon} ${EVENTS[activeMap.id].name} · FROM WAVE 6</b><span>${EVENTS[activeMap.id].effect}</span></div>
       ${corrupt?'<p class="ov-tag" style="color:#ffb4bf">⚠ Your saved march was corrupted and has been quarantined — starting fresh keeps everything else intact.</p>':''}
-      <div class="menu-save">${hasSave?`<strong>CONTINUE — WAVE ${ps.data.waveNum+1}</strong><span>${ps.data.towers.length} towers · ${ps.data.lives} lives</span>`:'<strong>NEW JOURNEY</strong><span>Your progress saves automatically.</span>'}</div>
+      <div class="menu-save">${hasSave?`<strong>CONTINUE — ${ps.data.battle?.active?'MID-WAVE '+ps.data.waveNum:'WAVE '+(ps.data.waveNum+1)}</strong><span>${ps.data.towers.length} towers · ${ps.data.lives} lives</span>`:'<strong>NEW JOURNEY</strong><span>Your progress saves automatically.</span>'}</div>
       ${cloudAccount?`<div class="menu-identity"><strong>${needsUsername?'CHOOSE YOUR PLAYER ID':'PLAYER RECORD'}</strong><span id="recordIdentity"></span><form id="usernameForm"><input id="usernameInput" aria-label="Player ID" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Player ID"><button type="submit">${needsUsername?'SAVE ID':'CHANGE ID'}</button></form><small>${USERNAME_HINT}</small></div>`:''}
       <div class="menu-actions">
         ${hasSave?`<button class="ov-btn" id="resumeBtn" ${needsUsername?'disabled':''}>▶ CONTINUE GAME</button>`:''}
         <button class="${hasSave?'ov-btn2':'ov-btn'}" id="startBtn" ${needsUsername?'disabled':''}>NEW GAME</button>
-        <button class="ov-btn2" id="menuSettings">SETTINGS</button>
+        <button class="ov-btn2" id="menuSettings">SETTINGS</button><button class="ov-btn2" id="menuCareer">✦ COMMANDER JOURNAL</button><button class="ov-btn2" id="menuFeedback">SEND FEEDBACK</button>
       </div>
       <div class="menu-account"><span id="accountLabel"></span><button id="accountBtn" ${cloudAccount||cloudAvailable?'':'disabled'}>${cloudAccount?'SIGN OUT':'SIGN IN WITH GOOGLE'}</button></div>
       ${cloudAccount?'<label class="menu-optin"><input id="updatesOptIn" type="checkbox"> Email me when BASTION gets an update</label>':''}
@@ -1782,7 +1828,7 @@ function showOverlay(kind){
       <p class="ov-keys">1–5 BUILD · SPACE WAVE · T THEME · P PAUSE</p></div>`;
     $('accountLabel').textContent=cloudAccount?(cloudAccount.username?'@'+cloudAccount.username:(cloudAccount.name||cloudAccount.email)):'GUEST PLAYER';
     $('cloudMessage').textContent=cloudMessage||(needsUsername?'Choose your player ID to continue.':cloudAccount?'Progress syncs with your Google account.':'Sign in to keep progress across devices.');
-    $('menuSettings').onclick=showSettings;
+    $('menuSettings').onclick=showSettings;$('menuCareer').onclick=featurePanels.showCareer;$('menuFeedback').onclick=featurePanels.showFeedback;
     overlay.querySelectorAll('[data-map]').forEach(button=>button.onclick=()=>{if(button.dataset.map!==activeMap.id)chooseMap(button.dataset.map);});
     if(cloudAccount){
       $('recordIdentity').textContent=needsUsername?'Pick a unique name for your saved record.':`@${cloudAccount.username} · ${activeMap.name} · BEST WAVE ${bestWave}`;
@@ -1834,8 +1880,8 @@ function showOverlay(kind){
       resetState(); state='play'; overlay.style.display='none';
       saveGame(true);showBanner('WAVE 1 AWAITS','BUILD YOUR DEFENSE, COMMANDER');}
     if(hasSave)$('resumeBtn').onclick=()=>{ initAudio();
-      if(loadGame()){ state='play'; overlay.style.display='none';
-        showBanner('MARCH RESUMED','WAVE '+(waveNum+1)+' AWAITS'); }
+      if(loadGame()){ state='play'; overlay.style.display='none';paused=waveActive;$('pauseBtn').innerHTML=paused?IC.play:IC.pause;
+        showBanner('MARCH RESUMED',waveActive?'MID-WAVE SAVED · TAP PLAY TO RESUME':'WAVE '+(waveNum+1)+' AWAITS');if(resumedCards){offerCards(resumedCards);resumedCards=null;}else if(cleared>=MAXW&&!endless&&!waveActive){state='win';showOverlay('win');} }
       else{ try{removeSelectedSave();}catch(e){}
         resetState(); state='play'; overlay.style.display='none'; } };
   }else if(kind==='win'){
@@ -1849,7 +1895,7 @@ function showOverlay(kind){
         <div><label>GOLD EARNED</label><b class="gold">${goldEarned}</b></div>
       </div>
       <button class="ov-btn" id="endlessBtn">ENDLESS MARCH →</button>
-      <button class="ov-btn2" id="againBtn">PLAY AGAIN</button><button class="ov-btn2" id="changeMapBtn">CHOOSE BATTLEFIELD</button></div>`;
+      <button class="ov-btn2" id="againBtn">PLAY AGAIN</button><button class="ov-btn2" data-end-career>✦ VIEW HONORS</button><button class="ov-btn2" data-end-feedback>SEND FEEDBACK</button><button class="ov-btn2" id="changeMapBtn">CHOOSE BATTLEFIELD</button></div>`;
     $('changeMapBtn').onclick=()=>chooseMap(activeMap.id);
     $('againBtn').onclick=()=>{ initAudio(); resetState(); state='play'; overlay.style.display='none';
       showBanner('RE-DEPLOYED','THE ROAD IS YOURS AGAIN'); };
@@ -1867,11 +1913,12 @@ function showOverlay(kind){
         <div><label>HOSTILES DOWN</label><b>${kills}</b></div>
         <div><label>GOLD EARNED</label><b class="gold">${goldEarned}</b></div>
       </div>
-      <button class="ov-btn" id="againBtn">RE-DEPLOY</button><button class="ov-btn2" id="changeMapBtn">CHOOSE BATTLEFIELD</button></div>`;
+      <button class="ov-btn" id="againBtn">RE-DEPLOY</button><button class="ov-btn2" data-end-career>✦ VIEW HONORS</button><button class="ov-btn2" data-end-feedback>SEND FEEDBACK</button><button class="ov-btn2" id="changeMapBtn">CHOOSE BATTLEFIELD</button></div>`;
     $('changeMapBtn').onclick=()=>chooseMap(activeMap.id);
     $('againBtn').onclick=()=>{ initAudio(); resetState(); state='play'; overlay.style.display='none';
       showBanner('RE-DEPLOYED','THE ROAD IS YOURS AGAIN'); };
   }
+  overlay.querySelector('[data-end-career]')?.addEventListener('click',featurePanels.showCareer);overlay.querySelector('[data-end-feedback]')?.addEventListener('click',featurePanels.showFeedback);
   const fb=overlay.querySelector('.ov-btn,#startBtn');
   if(fb){try{fb.focus({preventScroll:true});}catch(e){}}
 }
@@ -1879,18 +1926,19 @@ function showOverlay(kind){
 /* ---------- autosave (▲ GLM: schema v2 + throttled + forced milestones) ---------- */
 let lastSave=0;
 function saveGame(force){
-  if(MOTION_LAB||TOWER_LAB)return;
+  if(MOTION_LAB||TOWER_LAB||PLAY_LAB)return;
   if(state!=='play'&&state!=='cards')return;
   const n=performance.now();
   if(!force&&n-lastSave<4000)return;
-  lastSave=n;
+  lastSave=n;saveCareerProgress();
   try{
     const snapshot={
-      v:3,mapId:activeMap.id,at:Date.now(),
+      v:4,mapId:activeMap.id,balanceV:balanceVersion,at:Date.now(),
       lives,gold:Math.round(gold),waveNum,cleared,endless,kills,goldEarned,bestWave,
-      MOD:{...MOD},
+      MOD:{...MOD},journeyTypes:[...journeyTypes],journeyLegendary,
+      battle:serializeBattle({active:waveActive,spawnI,clock:spawnClock,elapsed:waveElapsed,time,seed:GRNG.seed(),combo,comboT,comboMult,idleOn,idleTimer,cards:state==='cards'?cardPool:[],creeps,towers,projs,shells}),
       towers:towers.map(t=>({key:t.key,c:t.c,r:t.r,dmgLv:t.dmgLv,rateLv:t.rateLv,
-        invested:t.invested,mode:t.mode,kills:t.kills||0})),
+        invested:t.invested,mode:t.mode,kills:t.kills||0,...Object.fromEntries(towerRuntimeFields.map(k=>[k,t[k]||0]))})),
     };
     writeMapSave(localStorage,saveOwner(),activeMap.id,JSON.stringify(snapshot));
     if(cloudAccount&&localStorage.getItem(SAVE_OWNER_KEY)===cloudAccount.uid){
@@ -1904,7 +1952,7 @@ function loadGame(){
     const s=sanitizeLoaded(d);
     if(!s||s.mapId!==activeMap.id)return false;
     if(DEBUG)console.info('[BASTION] loaded schema v'+(d&&d.v)+' → migrated to v2');
-    resetState();
+    resetState();balanceVersion=s.balanceV;journeyTypes=new Set(s.journeyTypes);journeyLegendary=s.journeyLegendary;
     lives=s.lives;gold=s.gold;waveNum=s.waveNum;cleared=s.cleared;
     bestWave=Math.max(bestWave,s.bestWave);saveBest(bestWave);
     endless=!!s.endless;kills=s.kills;goldEarned=s.goldEarned;
@@ -1913,9 +1961,18 @@ function loadGame(){
       const t={key:td.key,c:td.c,r:td.r,x:(td.c+.5)*CELL,y:(td.r+.5)*CELL,ang:-Math.PI/2,
         cool:0,dmgLv:td.dmgLv,rateLv:td.rateLv,invested:td.invested,mode:td.mode,
         flash:0,recoil:0,spin:0,kills:td.kills,abCd:0,odT:0,disabledT:0};
-      towers.push(t);towerAt.set(td.c+','+td.r,t);
+      Object.assign(t,Object.fromEntries(towerRuntimeFields.map(k=>[k,td[k]||0])));towers.push(t);towerAt.set(td.c+','+td.r,t);
     }
     idleOn=true;idleTimer=12;waveActive=false;
+    if(s.battle){const b=s.battle;
+      spawnQ=buildSpawnQueue(waveNum,balanceVersion);spawnI=b.spawnI;spawnClock=b.clock;waveElapsed=b.elapsed;time=b.time;GRNG.set(b.seed);
+      waveActive=b.active;hpMul=waveDef(waveNum).hp;curMod=waveActive?waveMod(waveNum):null;
+      combo=b.combo;comboT=b.comboT;comboMult=b.comboMult;idleOn=b.idleOn;idleTimer=b.idleTimer;
+      creeps=b.creeps.map(c=>{const p=posAt(c.dist);return {...c,x:p.x-p.dy*c.lane,y:p.y+p.dx*c.lane,dx:p.dx,dy:p.dy,flash:0,chan:towers[c.chanIndex]||null};});
+      projs=b.projs.map(p=>({...p,target:creeps[p.targetIndex]||null,src:towers[p.srcIndex]||null,tower:towers[p.towerIndex]||null}));
+      shells=b.shells.map(p=>({...p,src:towers[p.srcIndex]||null}));resumedCards=b.cards.length===3?b.cards:null;
+      eventState=battlefieldEvent(activeMap.id,waveNum,waveElapsed,balanceVersion>=2&&waveActive);lastEventPhase=eventState.phase;
+    }
     renderPreview(waveNum+1);renderInspector();
     return true;
   }catch(e){return false;}
@@ -1923,7 +1980,7 @@ function loadGame(){
 
 /* ---------- game actions ---------- */
 function resetState(){
-  lives=START_LIVES;gold=START_GOLD;kills=0;goldEarned=0;
+  lives=START_LIVES;gold=START_GOLD;kills=0;goldEarned=0;balanceVersion=BALANCE_VERSION;waveElapsed=0;eventState=battlefieldEvent(activeMap.id,0,0);lastEventPhase='calm';journeyTypes=new Set();journeyLegendary=0;resumedCards=null;simAccumulator=0;
   waveNum=0;cleared=0;waveActive=false;endless=false;spawnQ=[];spawnI=0;spawnClock=0;
   idleTimer=0;idleOn=false;paused=false;speedMul=1;$('speedBtn').textContent='1×';
   $('pauseBtn').innerHTML=IC.pause;
@@ -1945,18 +2002,20 @@ function setPlacing(k){
   if(cp)cp.hidden=!(placing&&(lastTouch||matchMedia('(pointer:coarse)').matches));
 }
 function canPlace(c,r){return isBuildableOnMap(activeMap.id,c,r)&&!towerAt.has(c+','+r);}
+function buildSpawnQueue(w,version=balanceVersion){
+  const q=[];let at=.8;for(const group of waveDef(w,version).groups){for(let i=0;i<group.n;i++){q.push({t:at,type:group.t});at+=group.gap;}at+=1.2;}return q;
+}
 function startWave(){
   if(waveActive||state!=='play')return;
-  if(idleOn&&idleTimer>0.5){
+  if(PREFS.autoWave&&idleOn&&idleTimer>0.5){
     const bonus=Math.floor(idleTimer)*2;
     if(bonus>0){gold+=bonus;goldEarned+=bonus;
       floaters.push({x:GATE.x-6,y:GATE.y-40,txt:'+'+bonus,life:1.2,color:'#f2b45c'});}
   }
   waveNum++;idleOn=false;curMod=waveMod(waveNum);
   const def=waveDef(waveNum);hpMul=def.hp;
-  spawnQ=[];let t=.8;
-  for(const g of def.groups){for(let i=0;i<g.n;i++){spawnQ.push({t,type:g.t});t+=g.gap;}t+=1.2;}
-  spawnI=0;spawnClock=0;waveActive=true;
+  spawnQ=buildSpawnQueue(waveNum);
+  spawnI=0;spawnClock=0;waveElapsed=0;waveActive=true;eventState=battlefieldEvent(activeMap.id,waveNum,0,balanceVersion>=2);lastEventPhase='calm';saveGame(true);
   renderPreview(waveNum+1);
   const modTxt=curMod?' · '+WMODS[curMod].label:'';
   showBanner('WAVE '+waveNum+modTxt,
@@ -1966,7 +2025,7 @@ function startWave(){
   rings.push({x:BREACH.x,y:BREACH.y,r:8,vr:110,life:.7,max:.7,color:TPAL.breach});
 }
 function endWave(){
-  waveActive=false;cleared++;curMod=null;
+  waveActive=false;cleared++;curMod=null;eventState=battlefieldEvent(activeMap.id,0,0);
   const b=Math.round((26+waveNum*4)*MOD.clearBonusMul);
   gold+=b;goldEarned+=b;
   bestWave=Math.max(bestWave,cleared);saveBest(bestWave);
@@ -1975,7 +2034,7 @@ function endWave(){
     state='win'; sfx('winT'); showOverlay('win'); return; }
   idleTimer=12;idleOn=true;
   if(cleared%5===0&&waveNum<900){ showBanner('WAVE CLEARED','+'+b+' GOLD — PROTOCOL CHOICE'); offerCards(); }
-  else showBanner('WAVE CLEARED','+'+b+' GOLD — NEXT IN 12s');
+  else showBanner('WAVE CLEARED','+'+b+' GOLD — '+(PREFS.autoWave?'NEXT IN 12s':'READY WHEN YOU ARE'));
   sfx('clear');
 }
 function doSpawn(type){
@@ -2027,6 +2086,7 @@ function leak(c){
   if(lives<=0){
     lives=0;state='over';
     bestWave=Math.max(bestWave,cleared);saveBest(bestWave);
+    saveCareerProgress();
     try{removeSelectedSave();}catch(e){}
     sfx('lose');showOverlay('over');
   }
@@ -2044,7 +2104,7 @@ function hurt(c,dmg,o={}){
     return;
   }
   const eff=Math.max(1,dmg-(o.pierce?0:(c.armor||0)));
-  c.hp-=eff;c.flash=.09;c.lastHit=time;sfxAt('hit',c.x);
+  c.hp-=eff;if(!o.environment){c.flash=.09;sfxAt('hit',c.x);}c.lastHit=time;
   if(c.hp<=0){
     c.dead=true;kills++;
     if(o.src)o.src.kills=(o.src.kills||0)+1;
@@ -2136,7 +2196,7 @@ function teslaFire(t,target){
   let dmg=statDmg(t);
   const hitSet=new Set();
   for(let i=0;i<chains;i++){
-    hurt(target,dmg*Math.pow(.75,i),{src:t});
+    hurt(target,dmg*chainMultiplier(i,balanceVersion),{src:t});
     zaps.push({pts:jagged(last.x,last.y,target.x,target.y,Math.floor(time*60)+i),life:.15,max:.15});
     hitSet.add(target);
     last={x:target.x,y:target.y};
@@ -2164,8 +2224,8 @@ function fire(t,target){
   }else if(b.kind==='shell'){
     const mx=t.x+Math.cos(t.ang)*10,my=t.y+Math.sin(t.ang)*10;
     const ft=Math.hypot(target.x-t.x,target.y-t.y)/b.pspeed;
-    const fut=posAt(target.dist+target.spd*(target.slowT>0?target.slowF:1)*ft);
-    shells.push({sx:mx,sy:my,tx:fut.x,ty:fut.y,t:0,ft,dmg,splash:b.splash,src:t});
+    const fut=posAt(target.dist+target.spd*(target.slowT>0?target.slowF:1)*(target.type==='boss'?eventState.bossSpeed:eventState.enemySpeed)*ft);
+    shells.push({sx:mx,sy:my,tx:fut.x,ty:fut.y,t:0,ft,dmg,splash:b.splash*eventState.splash,src:t});
     for(let i=0;i<3;i++)parts.push({x:mx,y:my,vx:(Math.random()-.5)*30,
       vy:-20-Math.random()*20,life:.5,max:.5,color:'rgba(170,160,180,.45)',
       s:3+Math.random()*2,rot:Math.random()*3,vr:1,petal:false});
@@ -2189,13 +2249,18 @@ function explode(s){
   for(const c of creeps){
     if(c.dead)continue;
     const d=Math.hypot(c.x-s.tx,c.y-s.ty);
-    if(d<=s.splash)hurt(c,s.dmg*(1-.55*(d/s.splash)),{src:s.src});
+    if(d<=s.splash)hurt(c,s.dmg*splashMultiplier(d,s.splash,balanceVersion),{src:s.src});
   }
 }
 
 /* ---------- update ---------- */
 function update(dt){
   if(waveActive){
+    waveElapsed+=dt;eventState=battlefieldEvent(activeMap.id,waveNum,waveElapsed,balanceVersion>=2);
+    if(eventState.phase!==lastEventPhase){lastEventPhase=eventState.phase;
+      if(eventState.phase==='warning')showBanner(EVENTS[activeMap.id].name+' IN 5s',EVENTS[activeMap.id].tactic);
+      if(eventState.phase==='active')showBanner(EVENTS[activeMap.id].name,EVENTS[activeMap.id].effect);
+    }
     spawnClock+=dt;
     while(spawnI<spawnQ.length&&spawnQ[spawnI].t<=spawnClock){doSpawn(spawnQ[spawnI].type);spawnI++;}
   }
@@ -2256,7 +2321,10 @@ function update(dt){
         continue;
       }
     }
-    const sf=c.slowT>0?c.slowF:1;
+    if(activeMap.id==='ember'&&eventState.phase==='active'&&EMBER_VENTS.some(v=>Math.hypot(v.x-c.x,v.y-c.y)<72)){
+      hurt(c,Math.min(c.type==='boss'?c.maxhp*.008:18+waveNum*1.2,80)*dt,{pierce:true,environment:true});if(c.dead)continue;
+    }
+    const sf=(c.slowT>0?c.slowF:1)*(c.type==='boss'?eventState.bossSpeed:eventState.enemySpeed);
     c.slowT-=dt;c.flash-=dt;
     c.dist+=c.spd*sf*dt;
     if(c.dist>=PATHLEN){leak(c);continue;}
@@ -2265,7 +2333,7 @@ function update(dt){
   }
   creeps=creeps.filter(c=>!c.dead);
   if(waveActive&&spawnI>=spawnQ.length&&creeps.length===0)endWave();
-  if(!waveActive&&idleOn){idleTimer-=dt;if(idleTimer<=0){idleTimer=0;startWave();}}
+  if(!waveActive&&idleOn&&PREFS.autoWave&&state==='play'){idleTimer-=dt;if(idleTimer<=0){idleTimer=0;startWave();}}
   if(combo>0){comboT-=dt;if(comboT<=0){combo=0;comboMult=1;}}
   for(const t of towers){
     t.cool-=dt;t.flash-=dt;t.recoil=Math.max(0,t.recoil-18*dt);
@@ -2475,7 +2543,7 @@ function render(){
   const shMul=(ART.motion?.25:0)*(PREFS.shake?Q().shake:0);
   if(shake>0)ctx.translate((Math.random()-.5)*shake*shMul,(Math.random()-.5)*shake*shMul);
   ctx.drawImage(bgCv,0,0,W,H);
-  drawSky();
+  drawSky();drawBattlefieldEvent();
   ctx.lineJoin='round';ctx.lineCap='round';
   ctx.save();
   ctx.beginPath();ctx.moveTo(WAY[0].x,WAY[0].y);
@@ -2783,8 +2851,8 @@ function hudFrame(){
   }else{
     launchBtn.disabled=state!=='play';
     setTxt(launchTxt,'LAUNCH WAVE '+(waveNum+1));
-    setTxt(launchSub,idleOn?'EARLY CALL BONUS +'+(Math.floor(idleTimer)*2)+' GOLD':'BUILD YOUR DEFENSES');
-    $('autoBar').style.visibility=idleOn?'visible':'hidden';
+    setTxt(launchSub,idleOn?(PREFS.autoWave?'EARLY CALL BONUS +'+(Math.floor(idleTimer)*2)+' GOLD':'READY WHEN YOU ARE'):'BUILD YOUR DEFENSES');
+    $('autoBar').style.visibility=idleOn&&PREFS.autoWave?'visible':'hidden';
     $('autoFill').style.width=(idleOn?idleTimer/12*100:0)+'%';
   }
   if(sel&&sel.dmgLv===3&&insAbBtn){
@@ -2805,7 +2873,7 @@ function toLocal(e){
 /* Mobile overview and zoom keep the logical game grid unchanged. */
 const boardWrap=$('boardWrap');
 let zoomScale=1,lastMapLandscape=null;
-const mobileMap=()=>innerWidth<=700||(innerWidth<=950&&innerWidth>innerHeight);
+const mobileMap=()=>innerWidth<=700||(innerWidth<=950&&innerWidth>innerHeight)||matchMedia('(pointer:coarse)').matches;
 function updateMapZoom(keepCenter=true,focus=null,anchor=null){
   if(!mobileMap()){
     document.body.classList.remove('map-overview');
@@ -2817,7 +2885,7 @@ function updateMapZoom(keepCenter=true,focus=null,anchor=null){
   const fy=focus?.y??wrapRect.top+boardWrap.clientHeight/2;
   const x=anchor?.x??(fx-oldRect.left)/Math.max(1,oldRect.width);
   const y=anchor?.y??(fy-oldRect.top)/Math.max(1,oldRect.height);
-  const fit=Math.max(1,Math.min(boardWrap.clientWidth,boardWrap.clientHeight*W/H));
+  const fit=fittedMapWidth(boardWrap.clientWidth,boardWrap.clientHeight,W/H);
   const width=fit*zoomScale;
   document.body.classList.toggle('map-overview',zoomScale<=1.001);
   cv.style.width=width+'px';cv.style.height=width*H/W+'px';
@@ -2899,7 +2967,7 @@ cv.addEventListener('pointermove',e=>{
     if(!mapPinch)beginMapPinch();
     const [a,b]=[...mapTouches.values()];
     const distance=Math.hypot(a.x-b.x,a.y-b.y);
-    zoomScale=Math.max(1,Math.min(3,mapPinch.scale*distance/mapPinch.distance));
+    zoomScale=pinchScale(mapPinch.scale,mapPinch.distance,distance);
     updateMapZoom(true,{x:(a.x+b.x)/2,y:(a.y+b.y)/2},mapPinch.anchor);
   }else if(mapTouches.size===1){
     if(Math.hypot(touch.x-touch.startX,touch.y-touch.startY)>10)touch.moved=true;
@@ -2912,7 +2980,7 @@ cv.addEventListener('pointermove',e=>{
 cv.addEventListener('pointerup',e=>{
   if(e.pointerType!=='touch'||!mapTouches.has(e.pointerId))return;
   const touch=mapTouches.get(e.pointerId);
-  const tap=!mapGesture&&!touch.moved&&Math.hypot(e.clientX-touch.startX,e.clientY-touch.startY)<=10;
+  const tap=gestureIsTap(touch,e.clientX,e.clientY,mapGesture);
   mapTouches.delete(e.pointerId);
   if(mapTouches.size<2)mapPinch=null;
   if(mapTouches.size===1){
@@ -2928,7 +2996,9 @@ cv.addEventListener('contextmenu',e=>{
   else{sel=null;renderInspector();}
 });
 window.addEventListener('keydown',e=>{
-  if(state==='menu'&&(e.key==='Enter'||e.key===' ')){e.preventDefault();
+  if(e.target?.closest('input,textarea,select,[contenteditable]')||featurePanels.isOpen())return;
+  if(state==='play'&&overlay.style.display!=='none'&&e.key!=='Escape')return;
+  if(state==='menu'&&e.target===document.body&&(e.key==='Enter'||e.key===' ')){e.preventDefault();
     const rb=$('resumeBtn');(rb||$('startBtn')).click();return;}
   if(e.key===' '){e.preventDefault();if(state==='play'&&!waveActive)startWave();return;}
   if(e.key>='1'&&e.key<='5'){const k=TORDER[+e.key-1];setPlacing(placing===k?null:k);return;}
@@ -2958,11 +3028,12 @@ launchBtn.onclick=()=>{if(state==='play'&&!waveActive)startWave();};
  $('menuBtn').onclick=()=>{
   if(state==='menu'){showOverlay('start');return;}
   if(state==='cards')return;
-  if(waveActive){showBanner('FINISH THE WAVE','THE MAIN MENU OPENS BETWEEN WAVES');return;}
   saveGame(true);state='menu';paused=false;showOverlay('start');
 };
  $('cancelPlace').onclick=()=>{setPlacing(null);sfx('tick');};
 window.addEventListener('beforeunload',()=>saveGame(true));
+window.addEventListener('pagehide',()=>{saveGame(true);mapTouches.clear();mapPinch=null;mapGesture=false;});
+window.addEventListener('blur',()=>{mapTouches.clear();mapPinch=null;mapGesture=false;});
 
 /* ---------- settings (▲ GLM PHASE 25) ---------- */
 const mqReduce=window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -2980,6 +3051,7 @@ function showSettings(){
     <h1 style="font-size:22px">SETTINGS</h1>
     <div class="setgrid">
       <label>SOUND</label><button class="setval${PREFS.muted?'':' on'}" id="setSnd">${PREFS.muted?'OFF':'ON'}</button>
+      <label>AUTO LAUNCH WAVES</label><button class="setval${PREFS.autoWave?' on':''}" id="setAutoWave">${PREFS.autoWave?'ON':'OFF'}</button>
       <label>VOLUME</label><input type="range" id="setVol" min="0" max="1" step="0.05" value="${PREFS.vol}">
       <label>GRAPHICS QUALITY</label><select id="setQ">
         <option value="auto"${PREFS.quality==='auto'?' selected':''}>AUTO</option>
@@ -2999,6 +3071,7 @@ function showSettings(){
     $('soundBtn').innerHTML=muted?IC.mute:IC.snd;
     $('setSnd').textContent=PREFS.muted?'OFF':'ON';
     $('setSnd').classList.toggle('on',!PREFS.muted);savePrefs(true);sfx('tick');};
+  $('setAutoWave').onclick=()=>{PREFS.autoWave=!PREFS.autoWave;$('setAutoWave').textContent=PREFS.autoWave?'ON':'OFF';$('setAutoWave').classList.toggle('on',PREFS.autoWave);idleTimer=12;savePrefs(true);};
   $('setVol').oninput=e=>{PREFS.vol=+e.target.value;
     if(master)master.gain.value=.5*PREFS.vol;savePrefs(false);};
   $('setQ').onchange=e=>{PREFS.quality=e.target.value;QUAL.cur='high';savePrefs(true);sfx('tick');};
@@ -3014,6 +3087,7 @@ function showSettings(){
   $('setClose').onclick=()=>{
     overlay.style.display='none';
     if(state==='menu')showOverlay('start');
+    else if(state==='win')showOverlay('win');else if(state==='over')showOverlay('over');
     else{paused=wasPaused;$('pauseBtn').innerHTML=paused?IC.play:IC.pause;}
     savePrefs(true);sfx('tick');
   };
@@ -3030,12 +3104,12 @@ if(DEBUG){
 }
 
 /* ---------- main loop ---------- */
-let last=performance.now();
+let last=performance.now(),simAccumulator=0,lastPaint=0;
 function frame(now){
   if(document.hidden){last=now;return;}
   try{
     const rawDt=now-last;last=now;
-    const dt=Math.min(.05,rawDt/1000);time+=dt;
+    const dt=Math.min(.1,rawDt/1000);
     qualSample(Math.min(100,Math.max(0,rawDt)));
     /* ▲ GLM PHASE 35 — numeric safety nets (never clamp legit large values). */
     if(!isFinite(gold))gold=0;
@@ -3058,12 +3132,16 @@ function frame(now){
         shoot={x:W*(.15+Math.random()*.7),y:H*(.05+Math.random()*.3),
           vx:(Math.random()<.5?-1:1)*(260+Math.random()*160),
           vy:120+Math.random()*90,life:.7,max:.7};}}
-    if(state==='play'&&!paused)update(dt*speedMul);
+    if(state==='play'&&!paused){
+      simAccumulator=Math.min(.3,simAccumulator+dt*speedMul);
+      while(simAccumulator>=1/60&&state==='play'&&!paused){time+=1/60;update(1/60);simAccumulator-=1/60;}
+    }else simAccumulator=0;
+    if(state==='play'&&!paused)saveGame(false);
     shake=Math.max(0,shake-14*dt);
     gateFlash=Math.max(0,gateFlash-dt);
     bossVignette=Math.max(0,bossVignette-dt*.55);
     if(bossDieFx){bossDieFx.t+=dt;if(bossDieFx.t>bossDieFx.dur)bossDieFx=null;}
-    render();hudFrame();
+    if(now-lastPaint>=(qLevel()==='low'?32:15)){render();hudFrame();updateForecast();lastPaint=now;}
     if(dbgEl){dbgT-=dt;
       if(dbgT<=0){dbgT=.25;
         dbgEl.textContent='FPS '+Math.round(1000/Math.max(1,QUAL.avg))+' · frame '+QUAL.avg.toFixed(1)+'ms'
@@ -3079,7 +3157,7 @@ function frame(now){
 }
 /* ▲ GLM PHASE 4 — clean recovery when the tab/OS suspended the loop. */
 document.addEventListener('visibilitychange',()=>{
-  if(document.hidden){saveGame(true);}
+  if(document.hidden){saveGame(true);mapTouches.clear();mapPinch=null;mapGesture=false;simAccumulator=0;if(state==='play'&&!paused){paused=true;$('pauseBtn').innerHTML=IC.play;}}
   else{last=performance.now();visualStamp=performance.now();}
 });
 
@@ -3454,7 +3532,7 @@ const BASTION_TESTS={
       T.ok(d.groups.every(g=>g.n>0&&g.gap>0));T.eq(d.boss,false);});
     T.t('waves: wave 5 is boss',()=>T.eq(waveDef(5).boss,true));
     T.t('waves: wave 30 reachable & populated',()=>{const d=waveDef(30);
-      T.ok(d.groups.length>0);T.ap(d.hp,1+29*.30+Math.pow(20,2)*.022,.001);});
+      T.ok(d.groups.length>0);T.ap(d.hp,waveHealth(30,balanceVersion),.001);});
     T.t('waves: modifier rules',()=>{T.eq(waveMod(5),null);T.eq(waveMod(11),null);
       T.ok(['armored','haste','comrades','shadow'].includes(waveMod(13)));});
     // -- targeting --
@@ -3497,7 +3575,7 @@ const BASTION_TESTS={
       const s=sanitizeLoaded({v:1,lives:5000,gold:-10,waveNum:12,cleared:12,
         towers:[{key:'bolt',c:0,r:0,dmgLv:9,rateLv:2,invested:150,mode:'weird',kills:3}],
         MOD:{rangeMul:1.2}});
-      T.eq(s.v,3);T.eq(s.mapId,'orchid');T.eq(s.lives,999);T.eq(s.gold,0);
+      T.eq(s.v,4);T.eq(s.balanceV,1);T.eq(s.mapId,'orchid');T.eq(s.lives,999);T.eq(s.gold,0);
       T.eq(s.towers[0].dmgLv,3);T.eq(s.towers[0].mode,'first');
       T.ap(s.MOD.rangeMul,1.2,.0001);});
     T.t('save: duplicate tower cells discarded',()=>{
@@ -3527,23 +3605,71 @@ const BASTION_TESTS={
   }
 };
 
+
+// Field features use a separate dialog; cloud refreshes never erase a typed report.
+const featurePanels=createFeaturePanels({career:()=>career,setFinish:selectCareerFinish,owner:saveOwner,account:()=>cloudAccount,submit:submitFeedback,
+  context:()=>({map:activeMap.id,wave:waveNum,version:RELEASE,width:innerWidth,height:innerHeight,quality:qLevel(),fps:Math.round(1000/Math.max(1,QUAL.avg)),touch:matchMedia('(pointer:coarse)').matches}),
+  pause:()=>{const wasPaused=paused;if(state==='play'){paused=true;$('pauseBtn').innerHTML=IC.play;saveGame(true);}return()=>{paused=wasPaused;$('pauseBtn').innerHTML=paused?IC.play:IC.pause;};}});
+const journalButton=document.createElement('button');journalButton.className='cbtn';journalButton.id='journalBtn';journalButton.textContent='✦';journalButton.title='Commander journal';journalButton.setAttribute('aria-label','Open commander journal');journalButton.onclick=featurePanels.showCareer;document.querySelector('.controls').append(journalButton);
+const forecast=document.createElement('div');forecast.id='eventForecast';forecast.setAttribute('role','status');forecast.setAttribute('aria-live','polite');document.querySelector('main').before(forecast);
+let forecastText='';
+function updateForecast(){
+  const e=EVENTS[activeMap.id],status=balanceVersion<2&&state==='play'?'LEGACY JOURNEY · ORIGINAL CONDITIONS':waveActive&&waveNum>=6?e.name+' · '+(eventState.phase==='warning'?'INCOMING':eventState.phase==='active'?'ACTIVE':'NEXT')+' '+eventState.seconds+'s':e.name+' · FROM WAVE 6';
+  if(status!==forecastText){forecastText=status;forecast.textContent=e.icon+' '+status;forecast.dataset.phase=eventState.phase;forecast.style.setProperty('--event-color',e.color);}
+}
+function drawBattlefieldEvent(){
+  if(!waveActive||eventState.phase==='calm')return;
+  const e=EVENTS[activeMap.id];ctx.save();
+  if(activeMap.id==='ember'){
+    for(const v of EMBER_VENTS){ctx.strokeStyle=e.color;ctx.lineWidth=eventState.phase==='active'?3:2;ctx.setLineDash(eventState.phase==='warning'?[8,6]:[]);ctx.fillStyle=hexA(e.color,eventState.phase==='active'?.12:.05);ctx.beginPath();ctx.arc(v.x,v.y,72,0,TAU);ctx.fill();ctx.stroke();ctx.fillStyle=e.color;ctx.font='bold 16px monospace';ctx.textAlign='center';ctx.fillText(eventState.phase==='warning'?'!':'▲',v.x,v.y-20);}ctx.restore();return;
+  }
+  ctx.fillStyle=hexA(e.color,eventState.phase==='active'?.04:.018);ctx.fillRect(0,0,W,H);
+  if(ART.motion&&eventState.phase==='active')for(let i=0;i<(qLevel()==='low'?8:24);i++){
+    const x=(dr(i+901)*W+waveElapsed*(activeMap.id==='sunspire'?95:25))%W,y=(dr(i+1203)*H+waveElapsed*20)%H;
+    ctx.strokeStyle=hexA(e.color,.35);ctx.lineWidth=1.3;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+(activeMap.id==='sunspire'?22:4),y+4);ctx.stroke();
+  }ctx.restore();
+}
+
 /* ---------- boot (▲ GLM: prefs → theme → start, test hook) ---------- */
+if(!MOTION_LAB&&!TOWER_LAB&&!PLAY_LAB)switchSaveOwner(saveOwner(),null);
 loadPrefs();
 muted=PREFS.muted;
  $('soundBtn').innerHTML=muted?IC.mute:IC.snd;
 applyMotion();
 applyTheme(PREFS.themeIx);
 renderPreview(1);renderInspector();showOverlay('start');
-if(!MOTION_LAB&&!TOWER_LAB)observeCloud(next=>{
+if(!MOTION_LAB&&!TOWER_LAB&&!PLAY_LAB)observeCloud(next=>{
   cloudAvailable=next.available;
   cloudMessage=next.error||'';
-  if(!next.error){
+  if(!next.error||next.account){
     cloudAccount=next.account;
     switchSaveOwner(cloudAccount?cloudAccount.uid:'guest',cloudAccount?.save);
   }
   if(state==='menu')showOverlay('start');
 });
 startPhaserScene(cv,renderCanvas,()=>frame(performance.now()),W,H);
+
+if(PLAY_LAB){
+  const controls=document.createElement('div');controls.id='playLabControls';controls.className='playlab-controls';
+  controls.innerHTML='<button id="playLabBattle">BATTLE WAVE 16</button><button id="playLabHonors">EARNED JOURNAL</button><button id="playLabSave">SAVE / RESTORE CHECK</button><button id="playLabCrowd">CROWD 180</button>';
+  document.body.append(controls);
+  const setup=()=>{resetState();state='play';overlay.style.display='none';gold=10000;waveNum=15;cleared=15;
+    for(let i=0;i<TORDER.length;i++){const key=TORDER[i];let found=null;
+      for(let c=2;c<COLS-1&&!found;c++)for(let r=1;r<ROWS-1&&!found;r++)if(canPlace(c,r)&&[...pathSet].some(cell=>{const [pc,pr]=cell.split(',').map(Number);return Math.hypot(pc-c,pr-r)<2;}))found={c,r};
+      if(found){const {c,r}=found,t={key,c,r,x:(c+.5)*CELL,y:(r+.5)*CELL,ang:0,cool:0,dmgLv:3,rateLv:3,invested:500,mode:'first',flash:0,recoil:0,spin:0,kills:0,abCd:0,odT:0,disabledT:0};towers.push(t);towerAt.set(c+','+r,t);}
+    }startWave();speedMul=1;waveElapsed=19;spawnClock=19;for(const type of ['runner','brute','swarm','boss','saboteur'])doSpawn(type);renderInspector();hudFrame();
+  };
+  $('playLabBattle').onclick=setup;
+  $('playLabHonors').onclick=()=>{career=normalizeCareer({v:1,maps:Object.fromEntries(MAPS.map(m=>[m.id,{wave:30,kills:1400,gold:16000,variety:5,legendary:3,perfect:30}])),finish:'aurora',updatedAt:Date.now()});featurePanels.showCareer();};
+  $('playLabSave').onclick=()=>{if(state==='menu')setup();paused=true;
+    const serialized=serializeBattle({active:waveActive,spawnI,clock:spawnClock,elapsed:waveElapsed,time,seed:GRNG.seed(),combo,comboT,comboMult,idleOn,idleTimer,cards:[],creeps,towers,projs,shells});
+    const restored=sanitizeBattle(JSON.parse(JSON.stringify(serialized)),activeMap.id,towers.length,spawnQ.length);
+    const ok=restored&&restored.creeps.length===serialized.creeps.length&&restored.projs.length===serialized.projs.length&&restored.clock===serialized.clock&&restored.seed===serialized.seed;
+    showBanner(ok?'BATTLE SNAPSHOT: PASS':'BATTLE SNAPSHOT: FAIL',serialized.creeps.length+' ENEMIES · '+serialized.projs.length+' PROJECTILES · WAVE '+waveNum);$('pauseBtn').innerHTML=IC.play;
+  };
+  $('playLabCrowd').onclick=()=>{setup();creeps=[];for(let i=0;i<180;i++){doSpawn(['runner','soldier','brute','swarm'][i%4]);const c=creeps.at(-1);c.dist=100+i*24;c.hp=c.maxhp=10000;const p=posAt(c.dist);Object.assign(c,p);c.lane=0;}showBanner('LOCAL STRESS TEST','180 UNITS · FIVE LEGENDARY TOWERS');};
+}
+
 // Local art fixture paints the production sprites and never writes player saves.
 if(TOWER_LAB){
   const panel=document.createElement('div');panel.id='towerLab';panel.style.cssText='position:fixed;inset:0;z-index:99;background:#101b2a;overflow:auto;padding:20px;color:#ecdfc4';
@@ -3594,5 +3720,5 @@ if(/devtest=1/.test(location.search)){
   setTimeout(()=>{const ok=BASTION_TESTS.runAll();BASTION_TESTS.report();
     showBanner(ok?'DEV TESTS: ALL PASS':'DEV TESTS: FAILURES',BASTION_TESTS.pass+' passed · '+BASTION_TESTS.fail+' failed — see console',ok?'':'bad');},600);
 }
-window.BASTION={version:'distinct-armories-2',tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
+window.BASTION={version:RELEASE,tests:BASTION_TESTS,QUAL,PREFS,GRNG,probeSave,saveGame,loadGame,sanitizeLoaded};
 

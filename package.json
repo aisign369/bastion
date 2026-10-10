@@ -5,6 +5,8 @@
   "packageManager": "pnpm@10.29.3",
   "type": "module",
   "scripts": {
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:frontier": "node --experimental-strip-types --test tests/frontier.test.mjs tests/cloud-merge.test.mjs tests/combat.test.mjs",
     "test:motion": "node --experimental-strip-types --test tests/unit-motion.test.mjs",
     "test:maps": "node --experimental-strip-types --test tests/maps.test.mjs",
     "dev": "vite --host 127.0.0.1",
