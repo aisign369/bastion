@@ -1,4 +1,4 @@
-# BASTION — Orchid Protocol
+# BASTION — Frontier Protocol
 
 [Play the game](https://bastion-eight-henna.vercel.app)
 
@@ -60,4 +60,43 @@ Orchid restores the actual original tower painters and steel bases from the rele
 ## Mobile controls
 
 Tap a tower type and then a free cell to build. Hold a tower type for details. Tap a built tower to upgrade or sell. Drag with one finger; pinch with two fingers to zoom. FIT shows the whole map.
+
+## Frontier Protocol (frontier-protocol-1)
+
+The start menu adds **Commander Journal** and **Field Feedback**, also available from the journal button during battle. Opening either pauses combat; closing restores the previous pause state. Feedback keeps a separate form, so an account callback cannot replace a message being typed.
+
+### Balance and map events
+
+New journeys use balance version 2. Existing journeys keep version 1, their original stats and no new weather, until the player starts a new game. Stinger prices and damage are unchanged. Rime gains 10% reach, Longshot gains 12% damage, mortar edge damage is 60% instead of 45%, and Tesla's chain falloff is 28% per hop instead of 25%. The quadratic health ramp after wave ten is 0.018 instead of 0.022. Upgrade prices, protocol cards, enemy roles and armor/shield counters remain in use. The inspector explains each tower's role and counterplay.
+
+Starting at wave six, each map forecasts an event: 18 seconds calm, five seconds of warning, nine seconds active, then a 42-second repeating cycle. Pause and game speed use the same simulation clock as combat.
+
+| Map | Event | Effect and counterplay |
+| --- | --- | --- |
+| Orchid | Lumen Bloom | All towers gain 12% reach. |
+| Ember | Caldera Eruption | Three marked bridge vents damage enemies; mortar splash radius gains 15%. Towers take no environmental damage. |
+| Frostwatch | Whiteout | Enemies slow 18%, bosses 10%, tower fire rate slows 8%; Rime is unaffected. |
+| Sunspire | Sandstorm | Tower reach drops 15%; Longshot retains full reach. Shadow wave penalties do not multiply with the storm. |
+
+The original Orchid tower artwork, approved Ember designs and unique Frostwatch/Sunspire armories remain intact.
+
+### Persistent career
+
+Eight honors track first clearance, wave five, 500 kills in a journey, deploying all five roles, a legendary tower, wave five on all four maps, thirty-wave victory and a perfect victory. Five foundation engravings unlock through these honors. They alter presentation only and never boost damage. Progress uses per-map maxima so replaying a checkpoint cannot farm honors. Guest/account careers are isolated locally; signed-in careers merge per-map maxima in a Firestore transaction under `players/{uid}.career`.
+
+### Private feedback
+
+Players choose bug/balance/idea, rate their experience and write 10–1500 characters. The draft is saved under their local guest/account slot. Guests can download a JSON draft; Google sign-in is required to send it. The developer reads received reports in **Firebase Console → Firestore Database → Data → players → player UID → feedback**. Reports include the player ID, battlefield, wave, version and timestamp. Technical diagnostics (screen size, FPS, quality and touch support) are unchecked by default; the report does not include the email. Existing owner-only rules protect this field. A private account can store up to 50 reports; this release does not send emails or create a public report feed.
+
+### Reliable checkpoints and mobile play
+
+Schema v4 retains spawn queue position, live enemies, projectiles, mortar shells, referenced targets, tower cooldowns/abilities, RNG seed, combo, event clock and pending protocol choices. Autosave runs every four seconds during play and at important transitions. A restored active wave starts paused. Backgrounding the page saves and pauses combat. Cloud synchronization keeps the newer timestamp per map, preserves best records, serializes in-flight writes and retries after connection failure; the local copy remains the immediate backup. Closing a browser cannot guarantee an in-flight network write completes.
+
+Auto-launch is now an explicit setting, off by default. Portrait/landscape layouts keep launch, upgrade/sell and FIT reachable, including landscape tablets. Two-finger pinch and one-finger pan cannot place a tower at the end of the gesture. Touch devices initially use medium adaptive quality; reduced motion remains supported. Simulation uses fixed 60 Hz steps and rendering can drop to 30 FPS at low quality without halving game speed.
+
+### Verification
+
+With Node 22.6+ run `pnpm test`, `pnpm test:frontier`, then `pnpm build`. Combat tests execute the production combat functions with presentation/storage adapters, exercise affordable openings on all four maps, mixed thirty-wave defenses and checkpoint replay during weather. They complement route, account isolation, gait, pinch, progression, feedback validation and stale-cloud-save tests. Simulated balance is a baseline; player feedback is needed for difficulty tuning.
+
+A development-only `?playlab=1&devtest=1` fixture previews an active wave, earned honors, a battle snapshot and 180 enemies. It skips player saves and account observation. Like the animation/tower labs, it is excluded from production builds.
 
